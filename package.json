@@ -1,0 +1,31 @@
+{
+  "name": "openconnectors",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first, community-driven platform for extracting personal data from institutional web portals via MCP servers and Playwright",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shayben/opencpnnectors.git"
+  },
+  "workspaces": [
+    "runtime",
+    "schemas",
+    "plugins/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0",
+    "@types/node": "^20.12.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "npm@10.0.0"
+}

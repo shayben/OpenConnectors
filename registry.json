@@ -1,0 +1,11 @@
+[
+  {
+    "id": "mock-bank",
+    "name": "Mock Bank",
+    "description": "Reference plugin simulating a bank portal for development and testing",
+    "repository": "https://github.com/shayben/opencpnnectors",
+    "version": "0.1.0",
+    "tags": ["banking", "reference", "mock"],
+    "author": "OpenConnectors Contributors"
+  }
+]

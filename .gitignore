@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment — credentials must never be committed
+.env
+.env.*
+*.pem
+*.key
+
+# Turbo
+.turbo/
+
+# npm
+*.tgz
+package-lock.json
+
+# Coverage & test artifacts
+coverage/
+.nyc_output/
+
+# Plugin data (user-generated at runtime)
+data/

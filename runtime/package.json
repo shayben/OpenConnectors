@@ -1,0 +1,35 @@
+{
+  "name": "@openconnectors/runtime",
+  "version": "0.1.0",
+  "description": "OpenConnectors CLI runtime — install, manage, and run data-extraction plugins",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "openconnectors": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "commander": "^12.0.0",
+    "keytar": "^7.9.0",
+    "zod": "^3.23.0",
+    "@openconnectors/schemas": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.12.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

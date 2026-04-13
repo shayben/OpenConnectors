@@ -1,0 +1,52 @@
+{
+  "id": "menora-pension",
+  "name": "Menora Mivtachim Pension",
+  "description": "Extracts pension fund statements and tax documents from Menora Mivtachim (מנורה מבטחים).",
+  "version": "0.1.0",
+  "author": "OpenConnectors Contributors",
+  "license": "MIT",
+  "institutionUrl": "https://www.menora.co.il",
+  "credentials": [
+    {
+      "key": "national_id",
+      "label": "National ID (Teudat Zehut)",
+      "optional": false
+    },
+    {
+      "key": "password",
+      "label": "Portal Password",
+      "optional": false
+    }
+  ],
+  "tools": [
+    {
+      "name": "fetch_pension_statement",
+      "description": "Fetch the current pension fund balance, contributions, and returns. Returns a structured pension statement.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "year": {
+            "type": "number",
+            "description": "Year for the pension statement (e.g. 2025). Defaults to current year."
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "fetch_tax_documents",
+      "description": "Fetch annual tax documents (pension fund annual statement / Form 106) for a given year.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "year": {
+            "type": "number",
+            "description": "Tax year to fetch documents for (e.g. 2025)"
+          }
+        },
+        "required": ["year"]
+      }
+    }
+  ],
+  "entryPoint": "dist/index.js"
+}

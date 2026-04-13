@@ -7,5 +7,50 @@
     "version": "0.1.0",
     "tags": ["banking", "reference", "mock"],
     "author": "OpenConnectors Contributors"
+  },
+  {
+    "id": "mizrahi-bank",
+    "name": "Mizrahi-Tefahot Bank",
+    "description": "Connector for Mizrahi-Tefahot Bank (מזרחי-טפחות) — Israel's third-largest bank. Extracts transactions and annual tax documents.",
+    "repository": "https://github.com/shayben/OpenConnectors",
+    "version": "0.1.0",
+    "tags": ["banking", "israel", "mizrahi"],
+    "author": "OpenConnectors Contributors"
+  },
+  {
+    "id": "menora-pension",
+    "name": "Menora Mivtachim Pension",
+    "description": "Connector for Menora Mivtachim (מנורה מבטחים) — pension fund, provident fund, and study fund statements and annual tax documents.",
+    "repository": "https://github.com/shayben/OpenConnectors",
+    "version": "0.1.0",
+    "tags": ["pension", "israel", "menora", "provident-fund"],
+    "author": "OpenConnectors Contributors"
+  },
+  {
+    "id": "harel-pension",
+    "name": "Harel Pension",
+    "description": "Connector for Harel Insurance & Finance (הראל ביטוח ופיננסים) — pension fund, provident fund, and study fund statements and annual tax documents.",
+    "repository": "https://github.com/shayben/OpenConnectors",
+    "version": "0.1.0",
+    "tags": ["pension", "israel", "harel", "insurance"],
+    "author": "OpenConnectors Contributors"
+  },
+  {
+    "id": "migdal-pension",
+    "name": "Migdal Pension",
+    "description": "Connector for Migdal Insurance (מגדל ביטוח) — pension fund, provident fund, and study fund statements and annual tax documents.",
+    "repository": "https://github.com/shayben/OpenConnectors",
+    "version": "0.1.0",
+    "tags": ["pension", "israel", "migdal", "insurance"],
+    "author": "OpenConnectors Contributors"
+  },
+  {
+    "id": "esop-excellence",
+    "name": "ESOP Excellence",
+    "description": "Connector for ESOP Excellence — Israel's leading ESOP management platform. Extracts equity grants (options, RSUs, SARs), vesting schedules, and Section 102 tax documents.",
+    "repository": "https://github.com/shayben/OpenConnectors",
+    "version": "0.1.0",
+    "tags": ["esop", "equity", "israel", "section-102", "stock-options"],
+    "author": "OpenConnectors Contributors"
   }
 ]

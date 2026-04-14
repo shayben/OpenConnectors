@@ -14,6 +14,9 @@ import { CredentialVault } from "../lib/vault.js";
 interface RunOptions {
   args: string;
   headless: boolean;
+  proxy?: string;
+  proxyUsername?: string;
+  proxyPassword?: string;
 }
 
 export async function runCommand(
@@ -44,6 +47,17 @@ export async function runCommand(
       ...process.env as Record<string, string>,
       OPENCONNECTORS_HEADLESS: options.headless ? "true" : "false",
     };
+
+    // Proxy configuration
+    if (options.proxy) {
+      env["OPENCONNECTORS_PROXY"] = options.proxy;
+    }
+    if (options.proxyUsername) {
+      env["OPENCONNECTORS_PROXY_USERNAME"] = options.proxyUsername;
+    }
+    if (options.proxyPassword) {
+      env["OPENCONNECTORS_PROXY_PASSWORD"] = options.proxyPassword;
+    }
 
     for (const cred of manifest.credentials) {
       const value = await vault.get(pluginId, cred.key);

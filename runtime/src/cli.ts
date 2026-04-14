@@ -40,6 +40,9 @@ program
   .option("--args <json>", "JSON-encoded arguments for the tool", "{}")
   .option("--headless", "Run browser in headless mode", true)
   .option("--no-headless", "Show the browser window")
+  .option("--proxy <url>", "Route browser traffic through a proxy server")
+  .option("--proxy-username <user>", "Proxy authentication username")
+  .option("--proxy-password <pass>", "Proxy authentication password")
   .action(runCommand);
 
 // --- Credential vault ---

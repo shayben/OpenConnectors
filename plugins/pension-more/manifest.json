@@ -1,0 +1,33 @@
+{
+  "id": "pension-more",
+  "name": "Mor Pension & Provident",
+  "description": "Extract detailed pension balance reports (דוח יתרות מפורט) from pension.more.co.il",
+  "version": "0.1.0",
+  "author": "OpenConnectors Contributors",
+  "license": "MIT",
+  "institutionUrl": "https://pension.more.co.il",
+  "credentials": [
+    {
+      "key": "id_number",
+      "label": "Israeli ID Number (תעודת זהות)",
+      "optional": false
+    },
+    {
+      "key": "password",
+      "label": "Password",
+      "optional": false
+    }
+  ],
+  "tools": [
+    {
+      "name": "fetch_detailed_balances",
+      "description": "Fetch דוח יתרות מפורט (detailed balances report) — fund balances broken down by component",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  ],
+  "entryPoint": "dist/index.js"
+}

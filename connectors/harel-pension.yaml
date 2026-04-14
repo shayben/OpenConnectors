@@ -1,0 +1,109 @@
+id: harel-pension
+name: Harel Insurance & Finance
+description: Extract pension statements and tax documents from Harel (הראל ביטוח ופיננסים)
+version: 0.1.0
+author: OpenConnectors Contributors
+license: MIT
+tags: [pension, israel, insurance]
+
+institution:
+  name: Harel Insurance & Finance
+  name_he: הראל ביטוח ופיננסים
+  url: https://digital.harel.co.il
+  country: IL
+  locale: he-IL
+  timezone: Asia/Jerusalem
+  requires_israeli_ip: true
+
+credentials:
+  - key: national_id
+    label: "National ID (תעודת זהות)"
+    type: text
+  - key: password
+    label: Portal Password
+    type: password
+
+actions:
+  - name: fetch_pension_statement
+    description: Fetch current pension fund balance, contributions, and returns
+    input_schema:
+      type: object
+      properties:
+        year:
+          type: number
+          description: Year for the pension statement (defaults to current year)
+      required: []
+    output_schema: PensionStatement
+    steps:
+      - phase: login
+        instructions: |
+          1. browser_navigate to https://digital.harel.co.il/login
+          2. browser_snapshot the login form
+          3. Fill the user ID field (input#userId or similar) with {{national_id}}
+          4. Fill the password field (input#password or input[type="password"]) with {{password}}
+          5. Click the submit button (button#loginSubmit or button[type="submit"])
+          6. Wait for the dashboard container to appear
+        otp_handling: |
+          If SMS OTP is required: screenshot, ask the user for the code, fill it in,
+          and click verify.
+        timeout_seconds: 120
+
+      - phase: navigate
+        instructions: |
+          1. browser_snapshot to see the navigation
+          2. Click the "פנסיה וגמל" link or equivalent pension/provident nav item
+          3. If a year selector is present (select#reportYear), select the requested year
+             (default: current year)
+          4. Wait for fund summary cards (.fund-summary-card or similar) to load
+
+      - phase: extract
+        instructions: |
+          1. browser_snapshot to see all fund cards
+          2. For each fund, extract:
+             - name: Hebrew fund name (e.g. "הראל פנסיה מקיפה")
+             - type: "pension" | "provident" | "study" (infer from fund name —
+                "פנסיה" → pension, "גמל" → provident, "השתלמות" → study)
+             - policyNumber: Policy/account number
+             - balance: Current total balance in ILS
+             - employeeContributions: YTD employee contributions
+             - employerContributions: YTD employer contributions
+             - investmentReturns: YTD returns
+             - returnRatePercent: YTD return rate as percent
+             - projectedMonthlyPension: Projected monthly pension (if shown)
+          3. Calculate totalBalance = sum of all fund balances
+          4. Build PensionStatement { year, asOfDate, institution: "Harel Insurance & Finance",
+             nationalId, funds, totalBalance }
+
+  - name: fetch_tax_documents
+    description: Fetch annual pension statement / tax documents for a given year
+    input_schema:
+      type: object
+      properties:
+        year:
+          type: number
+          description: Tax year
+      required: [year]
+    output_schema: Document
+    steps:
+      - phase: login
+        instructions: (same as fetch_pension_statement login phase)
+
+      - phase: navigate
+        instructions: |
+          1. Navigate to the documents / annual statements section
+          2. Select the requested tax year
+          3. Download the annual pension statement PDF
+
+      - phase: extract
+        instructions: |
+          Return a Document object (see @openconnectors/schemas) with:
+          - type: "investment_statement"
+          - mimeType: "application/pdf"
+          - taxYear: the requested year
+          - institution: "Harel Insurance & Finance"
+          - content: base64 of the PDF
+
+notes: |
+  - Hebrew UI; fund names indicate type (פנסיה, גמל, השתלמות)
+  - May require SMS OTP
+  - PensionStatement schema is shared across all Israeli pension connectors

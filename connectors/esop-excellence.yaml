@@ -1,0 +1,135 @@
+id: esop-excellence
+name: ESOP Excellence
+description: Extract equity grants (options, RSUs) and Section 102 tax documents from ESOP Excellence
+version: 0.1.0
+author: OpenConnectors Contributors
+license: MIT
+tags: [equity, israel, esop, stock-options]
+
+institution:
+  name: ESOP Excellence
+  url: https://app.esopexcellence.com
+  country: IL
+  locale: en-US
+  timezone: Asia/Jerusalem
+  requires_israeli_ip: false
+
+credentials:
+  - key: username
+    label: Email / Username
+    type: text
+  - key: password
+    label: Password
+    type: password
+
+actions:
+  - name: fetch_esop_grants
+    description: Fetch all equity grants (stock options, RSUs, SARs, ESPP) including vesting schedules
+    input_schema:
+      type: object
+      properties: {}
+      required: []
+    output_schema: EsopSummary
+    steps:
+      - phase: login
+        instructions: |
+          1. browser_navigate to https://app.esopexcellence.com/login
+          2. browser_snapshot the login form
+          3. Fill the email field (input[type="email"]) with {{username}}
+          4. Fill the password field (input[type="password"]) with {{password}}
+          5. Click the submit button (button[type="submit"])
+          6. Wait for the grants dashboard (.grants-dashboard) to appear
+        otp_handling: |
+          If MFA/OTP is required: screenshot, ask for the code, fill and submit.
+        timeout_seconds: 120
+
+      - phase: navigate
+        instructions: |
+          1. Click "My Grants" or navigate to the grants page
+          2. Wait for the grants table (table.grants-table tbody tr) to load
+
+      - phase: extract
+        instructions: |
+          1. For each grant row, extract:
+             - grantId: unique grant identifier
+             - type: "ISO" | "NSO" | "RSU" | "SAR" | "ESPP"
+             - grantDate: YYYY-MM-DD
+             - totalShares: total shares/options awarded
+             - vestedShares: shares vested to date
+             - exercisedShares: shares already exercised
+             - unvestedShares: remaining to vest
+             - exercisePriceUsd: strike price (options/SARs only)
+             - fmvPerShareUsd: current fair market value
+             - taxRoute: "102_capital_gains" | "102_ordinary_income" | "3i"
+             - status: "active" | "fully_vested" | "partially_vested" | "cancelled" | "exercised"
+             - expirationDate: YYYY-MM-DD
+          2. For each grant, click into the grant detail page and extract the
+             vestingSchedule as an array of { vestDate, shares, vested }
+          3. Calculate totalUnrealizedGainUsd:
+             sum over grants of max(0, (vestedShares - exercisedShares) *
+             (fmvPerShareUsd - (exercisePriceUsd ?? 0)))
+          4. Return EsopSummary { participant, companyName, grants,
+             totalUnrealizedGainUsd, asOfDate }
+
+  - name: fetch_tax_documents
+    description: Fetch Section 102 confirmations and annual exercise reports for a given year
+    input_schema:
+      type: object
+      properties:
+        year:
+          type: number
+      required: [year]
+    output_schema: Document[]
+    steps:
+      - phase: login
+        instructions: (same as fetch_esop_grants)
+
+      - phase: navigate
+        instructions: |
+          1. Navigate to the Documents / Tax Documents section
+          2. Filter by the requested tax year
+
+      - phase: extract
+        instructions: |
+          1. For each document found, download as PDF
+          2. Return an array of Document objects with:
+             - type: "tax_form" (category: section_102_confirmation or annual_exercise_report
+               in metadata)
+             - mimeType: "application/pdf"
+             - taxYear: the requested year
+             - institution: "ESOP Excellence"
+             - content: base64 of PDF
+
+output_types: |
+  EsopSummary:
+    participant: string          # Username / email
+    companyName: string
+    grants: EsopGrant[]
+    totalUnrealizedGainUsd: number
+    asOfDate: string
+
+  EsopGrant:
+    grantId: string
+    type: "ISO" | "NSO" | "RSU" | "SAR" | "ESPP"
+    grantDate: string            # YYYY-MM-DD
+    totalShares: number
+    vestedShares: number
+    exercisedShares: number
+    unvestedShares: number
+    exercisePriceUsd?: number
+    fmvPerShareUsd?: number
+    vestingSchedule: VestingEvent[]
+    taxRoute?: "102_capital_gains" | "102_ordinary_income" | "3i"
+    status: "active" | "fully_vested" | "partially_vested" | "cancelled" | "exercised"
+    expirationDate?: string
+
+  VestingEvent:
+    vestDate: string
+    shares: number
+    vested: boolean
+
+notes: |
+  - Israel's leading ESOP administration platform for tech companies
+  - Section 102 is the Israeli tax regime for employee equity (capital gains
+    vs ordinary income routes)
+  - Exercise prices and FMV are always in USD (not ILS)

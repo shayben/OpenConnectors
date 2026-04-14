@@ -4,62 +4,91 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-OpenConnectors is a local-first platform for extracting personal data from institutional web portals (banks, government, healthcare). Each connector is an MCP server wrapping Playwright browser automation. Credentials live in the OS keychain (keytar) and never leave the device.
+OpenConnectors is a declarative connector registry for extracting personal data from institutional web portals (banks, pension funds, equity platforms). Each connector is a YAML file describing login flow, navigation steps, and output schema. Claude executes the navigation using the **`@playwright/mcp`** server — this repo does not contain any Playwright code.
+
+## Architecture
+
+Two MCP servers work together:
+
+```
+Claude
+  ├── @playwright/mcp         → browser tools (browser_navigate, browser_click,
+  │                             browser_fill_form, browser_snapshot, browser_evaluate,
+  │                             browser_take_screenshot, browser_wait_for, ...)
+  └── @openconnectors/runtime → connector tools (list_connectors, get_connector,
+                                get_credentials, vault_status)
+```
+
+**Execution flow when Claude is asked to fetch data from an institution:**
+
+1. `list_connectors` — find the right connector
+2. `get_connector(id)` — load the full YAML definition
+3. `vault_status(connector_id)` — confirm required credentials are set
+4. `get_credentials(connector_id)` — retrieve decrypted secrets from OS keychain
+5. Follow the `steps` in the YAML using Playwright MCP tools, substituting `{{credential_key}}` placeholders
+6. Validate extracted data against the declared `output_schema`
 
 ## Build & Development Commands
 
 ```bash
 # Monorepo-wide (from root)
-npm run build        # Compile all packages via Turbo
-npm run typecheck    # Type-check all packages (tsc --noEmit)
-npm run lint         # Lint all packages
-npm run clean        # Delete dist/ in all packages
+npm run build      # Compile runtime + schemas via Turbo
+npm run typecheck  # Type-check without emit
+npm run clean      # Delete dist/
 
-# Single package
-npx turbo run build --filter=@openconnectors/runtime
-npx turbo run build --filter=plugins/mock-bank
-
-# Run the CLI locally
-node runtime/dist/cli.js <command>
+# Run the CLI
+node runtime/dist/cli.js list                                 # list connectors
+node runtime/dist/cli.js vault set <connector> <key>          # store a credential
+node runtime/dist/cli.js vault clear <connector> [--key k]    # remove credentials
+node runtime/dist/cli.js serve                                # start MCP server
 ```
 
-No test framework is configured yet.
+No test framework configured yet.
 
-## Monorepo Layout
+## Repository Layout
 
-Three npm workspaces orchestrated by Turbo:
+- **`connectors/`** — YAML connector definitions. One file per institution. See `connectors/README.md` for the schema.
+- **`runtime/`** (`@openconnectors/runtime`) — CLI + MCP server. Three libs: `connector-loader.ts` (reads/validates YAML), `vault.ts` (OS keychain via `@napi-rs/keyring`), `mcp-server.ts` (exposes the four tools listed above).
+- **`schemas/`** (`@openconnectors/schemas`) — Zod schemas for normalized output types: `Transaction`, `Document`, `Form106`. Shared across connectors.
 
-- **`schemas/`** (`@openconnectors/schemas`) — Zod schemas for normalized output types: `Transaction`, `Document`, `Form106`. Every plugin imports these. Build this first (Turbo handles ordering via `^build`).
-- **`runtime/`** (`@openconnectors/runtime`) — CLI and plugin orchestration. Commands: `install`, `list`, `run`, `vault`. Spawns plugins as child processes, communicates via MCP, injects credentials as `OPENCONNECTORS_CRED_*` env vars.
-- **`plugins/*`** — Each plugin is an independent MCP server. `plugins/mock-bank/` is the reference implementation and template for new connectors.
+## Connector YAML Schema
 
-## Architecture: How a Plugin Runs
+Each `connectors/<id>.yaml` has:
+- `id`, `name`, `description`, `version`, `author`, `license`, `tags`
+- `institution`: name, url, country, locale, timezone, `requires_israeli_ip` hint
+- `credentials`: array of `{ key, label, type: text|password|totp_secret }`
+- `actions`: array of actions, each with:
+  - `name` (snake_case), `description`, `input_schema` (JSON Schema), `output_schema` (type name)
+  - `steps`: ordered phases (`login`, `navigate`, `extract`) with natural-language `instructions` that reference Playwright MCP tool names
+  - Optional `otp_handling`, `data_format`, `timeout_seconds` per step
 
-```
-CLI (runtime/src/commands/run.ts)
-  → PluginManager resolves manifest + path
-  → CredentialVault loads secrets from OS keychain
-  → Spawns plugin as child process (node plugin/dist/index.js)
-    with OPENCONNECTORS_CRED_* env vars and OPENCONNECTORS_HEADLESS
-  → MCP client sends tool call → plugin's MCP server handles it
-  → Plugin launches Playwright, scrapes, returns normalized JSON
-  → Runtime prints result to stdout
-```
-
-## Plugin Structure
-
-Every plugin needs:
-- **`manifest.json`** — validated against `PluginManifestSchema` (runtime/src/lib/manifest.ts). Declares id (kebab-case), credentials, tools with JSON Schema inputs, and entryPoint.
-- **`src/index.ts`** — MCP server that registers tools via `@modelcontextprotocol/sdk`.
-- **`src/tools/`** — Individual tool implementations using Playwright + schemas from `@openconnectors/schemas`.
-
-See `docs/plugin-authoring.md` for the step-by-step guide and `plugins/mock-bank/` as the reference template.
+See `runtime/src/lib/connector-schema.ts` for the full Zod validation schema.
 
 ## Key Conventions
 
 - **TypeScript strict mode**, target ES2022, module Node16. All packages use `"type": "module"` with `.js` extensions in imports.
-- **Zod** for all runtime validation (manifests, tool inputs, schema output).
-- **No .env files** — credentials go in OS keychain via `vault set`, config via CLI flags.
-- **2 spaces, LF line endings** (see .editorconfig).
-- Installed plugins live at `~/.openconnectors/plugins/`.
-- Registry is a static `registry.json` at repo root — no server component.
+- **Zod** for manifest validation. **js-yaml** for parsing.
+- **Credentials** always go through `@napi-rs/keyring` (OS-native keystore). Never written to disk.
+- **2 spaces, LF line endings** (see `.editorconfig`).
+- Connector ids are kebab-case. Credential keys and action names are snake_case.
+
+## MCP Client Configuration
+
+Users configure both MCP servers in their Claude client:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest", "--proxy-server", "http://user:pass@proxy:port"]
+    },
+    "openconnectors": {
+      "command": "node",
+      "args": ["<path-to-repo>/runtime/dist/cli.js", "serve"]
+    }
+  }
+}
+```
+
+Proxy configuration (for connectors with `requires_israeli_ip: true`) lives at the Playwright MCP level — not per-connector.

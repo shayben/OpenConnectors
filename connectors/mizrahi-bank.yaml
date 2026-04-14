@@ -1,0 +1,117 @@
+id: mizrahi-bank
+name: Mizrahi-Tefahot Bank
+description: Extract transactions and tax documents from Mizrahi-Tefahot Bank (מזרחי-טפחות)
+version: 0.1.0
+author: OpenConnectors Contributors
+license: MIT
+tags: [bank, israel, transactions]
+
+institution:
+  name: Mizrahi-Tefahot Bank
+  name_he: מזרחי-טפחות
+  url: https://www.mizrahi-tefahot.co.il
+  country: IL
+  locale: he-IL
+  timezone: Asia/Jerusalem
+  requires_israeli_ip: true
+
+credentials:
+  - key: national_id
+    label: "National ID (תעודת זהות)"
+    type: text
+  - key: password
+    label: Online Banking Password
+    type: password
+
+actions:
+  - name: fetch_transactions
+    description: Fetch bank transactions for a date range
+    input_schema:
+      type: object
+      properties:
+        from_date:
+          type: string
+          description: Start date in YYYY-MM-DD format
+        to_date:
+          type: string
+          description: End date in YYYY-MM-DD format
+        account_number:
+          type: string
+          description: Specific account number (optional — defaults to primary account)
+      required: [from_date, to_date]
+    output_schema: Transaction[]
+    steps:
+      - phase: login
+        instructions: |
+          1. browser_navigate to https://www.mizrahi-tefahot.co.il/he/bank/login/
+          2. browser_snapshot the login form
+          3. Fill the ID field (input[name="ID"]) with {{national_id}}
+          4. Fill the password field (input[name="password"]) with {{password}}
+          5. Click the submit button (button[type="submit"])
+          6. Wait for the account dashboard (.account-dashboard) to appear
+        otp_handling: |
+          Mizrahi-Tefahot almost always requires SMS OTP. Screenshot the prompt,
+          ask the user for the code, fill it in, and click verify.
+        timeout_seconds: 180
+
+      - phase: navigate
+        instructions: |
+          1. Click the transactions/תנועות link from the dashboard
+          2. If account_number was provided, select it from the account dropdown
+             (select#accountSelect)
+          3. Fill the date range: from_date into input#fromDate, to_date into input#toDate
+          4. Click the search button (button#searchTransactions)
+          5. Wait for the results table (table.transactions-table tbody tr) to load
+
+      - phase: extract
+        instructions: |
+          1. browser_snapshot to see the transactions table
+          2. For each row, extract:
+             - date: YYYY-MM-DD
+             - amount: signed number in ILS (negative = debit)
+             - originalDescription: raw description string
+             - description: cleaned/normalized description
+             - balance: running balance after this transaction
+          3. Map each to a Transaction object (see @openconnectors/schemas) with:
+             - id: "MIZRAHI-" + sequential index
+             - currency: "ILS"
+             - accountId: the account_number used (or the primary account ID)
+             - pending: false (unless the row is explicitly marked pending)
+             - category: infer from description (see Transaction schema enum —
+               food, utilities, transportation, healthcare, entertainment, income,
+               housing, fee, transfer, shopping, savings, etc.)
+
+  - name: fetch_tax_documents
+    description: Fetch annual tax documents (Form 106 / bank statement) for a given year
+    input_schema:
+      type: object
+      properties:
+        year:
+          type: number
+      required: [year]
+    output_schema: "{ form106: Form106, document: Document }"
+    steps:
+      - phase: login
+        instructions: (same as fetch_transactions)
+
+      - phase: navigate
+        instructions: |
+          1. Navigate to the documents / מסמכים section
+          2. Select "Annual Bank Statement" / "דוח שנתי"
+          3. Choose the requested year (select#yearSelect)
+          4. Click download (button#downloadStatement) and wait for the PDF
+
+      - phase: extract
+        instructions: |
+          1. Return Document { id, title, type: "bank_statement",
+             mimeType: "application/pdf", taxYear, institution: "Mizrahi-Tefahot Bank",
+             content: base64 of PDF }
+          2. If the bank also exposes salary Form 106 data, extract and return a
+             Form106 object (see @openconnectors/schemas) with grossSalary,
+             taxableIncome, bonusPayments, pension contributions, national insurance,
+             health insurance, incomeTaxWithheld, taxCreditPoints, etc.
+
+notes: |
+  - One of Israel's largest banks; reliably requires 2FA
+  - Hebrew merchant names in transactions (e.g. "רמי לוי", "בזק", "ביט העברה")
+  - Category inference from Hebrew keywords works well

@@ -1,0 +1,107 @@
+id: pension-more
+name: Mor Pension & Provident
+description: Extract דוח יתרות מפורט (detailed balances report) from pension.more.co.il
+version: 0.1.0
+author: OpenConnectors Contributors
+license: MIT
+tags: [pension, israel, provident-fund]
+
+institution:
+  name: Mor Pension & Provident
+  name_he: מור גמל ופנסיה
+  url: https://my-account.more.co.il
+  country: IL
+  locale: he-IL
+  timezone: Asia/Jerusalem
+  requires_israeli_ip: true
+
+credentials:
+  - key: id_number
+    label: "Israeli ID Number (תעודת זהות)"
+    type: text
+  - key: password
+    label: Password
+    type: password
+
+actions:
+  - name: fetch_detailed_balances
+    description: "Fetch דוח יתרות מפורט — fund balances broken down by component (employee, employer, severance, returns)"
+    input_schema:
+      type: object
+      properties: {}
+      required: []
+    output_schema: DetailedBalanceEntry[]
+    steps:
+      - phase: login
+        instructions: |
+          1. browser_navigate to https://my-account.more.co.il/login
+          2. browser_snapshot to identify the login form
+          3. Fill the Israeli ID field (look for an input with type="text" or type="tel",
+             or name/id containing "id" or "tz") with {{id_number}}
+          4. Fill the password field (input[type="password"]) with {{password}}
+          5. Click the submit button — look for a button with text "כניסה" or "התחבר"
+             or type="submit"
+          6. Wait for navigation away from the /login URL
+        otp_handling: |
+          If an OTP / SMS verification screen appears:
+          - browser_take_screenshot to capture the OTP prompt
+          - Tell the user an OTP has been sent to their phone and ask for the code
+          - Fill the OTP input field with the code provided
+          - Click the verify/submit button
+        timeout_seconds: 120
+
+      - phase: navigate
+        instructions: |
+          1. browser_snapshot to see the post-login dashboard
+          2. Look for a link or menu item with the text "דוח יתרות מפורט" (detailed
+             balances report). If not visible, look for a reports/statements menu
+             ("דוחות", "מידע על חשבון") and expand it first.
+          3. Click the detailed balances report link.
+          4. If no navigation link is found, browser_navigate directly to
+             https://my-account.more.co.il/personalarea/balances as a fallback.
+          5. Wait for a table or data container to appear.
+
+      - phase: extract
+        instructions: |
+          1. browser_snapshot to see the full report content
+          2. Identify the main data table (HTML <table> or div-based grid)
+          3. Use browser_evaluate to run a script that extracts each row as a cell array
+          4. For each row, map columns to a DetailedBalanceEntry object with fields:
+             - productName (column 0): Fund/product name in Hebrew
+             - accountNumber (column 1): Policy/account number
+             - employerName (column 2): Employer name associated with this fund
+             - totalBalance (column 3): Total accumulated balance in ILS
+             - employeeContribution (column 4): Employee contribution component
+             - employerContribution (column 5): Employer contribution component
+             - severanceComponent (column 6): Severance component (פיצויים)
+             - investmentReturns (column 7): Returns component
+             - investmentTrack (column 8): Investment track name
+          5. Also extract the report date from elements containing "נכון ל" or
+             "תאריך דוח" — assign to the reportDate field of each entry.
+        data_format: |
+          Hebrew number parsing rules:
+          - Remove currency symbols (₪) and whitespace
+          - Replace commas (1,234.56 → 1234.56)
+          - Trailing minus sign means negative (1,234.56- → -1234.56)
+          - Return as numeric values, not strings
+
+output_types: |
+  DetailedBalanceEntry:
+    productName: string     # Hebrew product/fund name
+    accountNumber: string   # Account or policy number
+    employerName: string    # Employer name
+    totalBalance: number    # Total balance in ILS
+    employeeContribution: number
+    employerContribution: number
+    severanceComponent: number   # פיצויים
+    investmentReturns: number
+    investmentTrack: string      # Investment track name
+    reportDate: string           # YYYY-MM-DD or DD.MM.YYYY
+
+notes: |
+  - Hebrew SPA that may take a few seconds to hydrate — rely on element visibility,
+    not networkidle
+  - All amounts are ILS
+  - Site may block non-Israeli IPs — configure the Playwright MCP with an Israeli proxy
+    if running from outside Israel
+  - If login fails, take a screenshot before retrying

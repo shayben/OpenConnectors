@@ -1,7 +1,7 @@
 {
   "name": "@openconnectors/runtime",
   "version": "0.1.0",
-  "description": "OpenConnectors CLI runtime — install, manage, and run data-extraction plugins",
+  "description": "OpenConnectors CLI and MCP server — manages connector definitions and credentials",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -16,18 +16,19 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "start": "node dist/cli.js"
+    "start": "node dist/cli.js serve"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "commander": "^12.0.0",
     "@napi-rs/keyring": "^1.1.0",
-    "zod": "^3.23.0",
-    "@openconnectors/schemas": "*"
+    "commander": "^12.0.0",
+    "js-yaml": "^4.1.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
-    "@types/node": "^20.12.0"
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.12.0",
+    "typescript": "^5.4.0"
   },
   "engines": {
     "node": ">=20.0.0"

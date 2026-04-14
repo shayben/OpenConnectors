@@ -2,16 +2,16 @@
  * CLI: openconnectors vault set|clear
  *
  * Manage credentials stored in the system keychain.
- * Credentials are scoped per-plugin and never leave the machine.
+ * Credentials are scoped per-connector and never leave the machine.
  */
 
 import { createInterface } from "node:readline";
 import { CredentialVault } from "../lib/vault.js";
-import { PluginManager } from "../lib/plugin-manager.js";
+import { ConnectorLoader } from "../lib/connector-loader.js";
 
 /**
  * Prompt the user for a secret value (hidden input via terminal raw mode).
- * Falls back to visible input if raw mode is unavailable (e.g. piped stdin).
+ * Falls back to visible input if raw mode is unavailable.
  */
 async function promptSecret(prompt: string): Promise<string> {
   return new Promise((resolve) => {
@@ -21,7 +21,6 @@ async function promptSecret(prompt: string): Promise<string> {
       terminal: true,
     });
 
-    // Attempt to hide input by disabling echo
     if (process.stdin.isTTY) {
       process.stderr.write(prompt);
       process.stdin.setRawMode?.(true);
@@ -37,12 +36,10 @@ async function promptSecret(prompt: string): Promise<string> {
           rl.close();
           resolve(value);
         } else if (char === "\u0003") {
-          // Ctrl+C
           process.stdin.setRawMode?.(false);
           rl.close();
           process.exit(130);
         } else if (char === "\u007F" || char === "\b") {
-          // Backspace
           value = value.slice(0, -1);
         } else {
           value += char;
@@ -50,7 +47,6 @@ async function promptSecret(prompt: string): Promise<string> {
       };
       process.stdin.on("data", onData);
     } else {
-      // Non-interactive fallback
       rl.question(prompt, (answer) => {
         rl.close();
         resolve(answer);
@@ -59,13 +55,9 @@ async function promptSecret(prompt: string): Promise<string> {
   });
 }
 
-/**
- * `openconnectors vault set <plugin> <key>`
- *
- * Stores a credential securely in the system keychain.
- */
+/** `openconnectors vault set <connector> <key>` */
 export async function vaultSetCommand(
-  pluginId: string,
+  connectorId: string,
   key: string
 ): Promise<void> {
   try {
@@ -78,9 +70,9 @@ export async function vaultSetCommand(
     }
 
     const vault = new CredentialVault();
-    await vault.set(pluginId, key, value);
+    await vault.set(connectorId, key, value);
 
-    console.log(`Credential "${key}" stored for plugin "${pluginId}".`);
+    console.log(`Credential "${key}" stored for connector "${connectorId}".`);
   } catch (err) {
     console.error(
       `Error: ${err instanceof Error ? err.message : String(err)}`
@@ -89,37 +81,33 @@ export async function vaultSetCommand(
   }
 }
 
-/**
- * `openconnectors vault clear <plugin> [--key <key>]`
- *
- * Removes credentials from the system keychain.
- */
+/** `openconnectors vault clear <connector> [--key <key>]` */
 export async function vaultClearCommand(
-  pluginId: string,
+  connectorId: string,
   options: { key?: string }
 ): Promise<void> {
   try {
     const vault = new CredentialVault();
 
     if (options.key) {
-      const deleted = await vault.delete(pluginId, options.key);
+      const deleted = await vault.delete(connectorId, options.key);
       if (deleted) {
         console.log(
-          `Credential "${options.key}" removed for plugin "${pluginId}".`
+          `Credential "${options.key}" removed for connector "${connectorId}".`
         );
       } else {
         console.log(
-          `No credential "${options.key}" found for plugin "${pluginId}".`
+          `No credential "${options.key}" found for connector "${connectorId}".`
         );
       }
     } else {
-      // Load the plugin manifest to discover all credential keys
-      const manager = new PluginManager();
-      const { manifest } = await manager.resolve(pluginId);
-      const keys = manifest.credentials.map((c) => c.key);
-      const count = await vault.clearAll(pluginId, keys);
+      // Load the connector YAML to discover credential keys
+      const loader = new ConnectorLoader();
+      const { connector } = await loader.get(connectorId);
+      const keys = connector.credentials.map((c) => c.key);
+      const count = await vault.clearAll(connectorId, keys);
       console.log(
-        `Removed ${count} credential(s) for plugin "${pluginId}".`
+        `Removed ${count} credential(s) for connector "${connectorId}".`
       );
     }
   } catch (err) {

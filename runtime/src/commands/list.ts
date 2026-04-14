@@ -1,34 +1,47 @@
 /**
  * CLI: openconnectors list
  *
- * List all installed plugins and the tools they expose.
+ * Lists all available connectors from the connectors/ directory.
  */
 
-import { PluginManager } from "../lib/plugin-manager.js";
+import { ConnectorLoader } from "../lib/connector-loader.js";
+import { CredentialVault } from "../lib/vault.js";
 
 export async function listCommand(): Promise<void> {
   try {
-    const manager = new PluginManager();
-    const plugins = await manager.list();
+    const loader = new ConnectorLoader();
+    const vault = new CredentialVault();
+    const all = await loader.list();
 
-    if (plugins.length === 0) {
-      console.log("No plugins installed.");
-      console.log("Install one with: openconnectors install <plugin>");
+    if (all.length === 0) {
+      console.log(`No connectors found in ${loader.directory}`);
       return;
     }
 
-    console.log(`Installed plugins (${plugins.length}):\n`);
+    console.log(`Available connectors (${all.length}):\n`);
 
-    for (const { manifest } of plugins) {
-      console.log(`  ${manifest.name} (${manifest.id}@${manifest.version})`);
-      console.log(`    ${manifest.description}`);
-      console.log(`    Tools: ${manifest.tools.map((t) => t.name).join(", ")}`);
-
-      if (manifest.credentials.length > 0) {
-        const keys = manifest.credentials.map((c) => c.key).join(", ");
-        console.log(`    Credentials: ${keys}`);
+    for (const { connector } of all) {
+      const required = connector.credentials.filter((c) => !c.optional);
+      let credsReady = true;
+      for (const cred of required) {
+        const v = await vault.get(connector.id, cred.key);
+        if (!v) {
+          credsReady = false;
+          break;
+        }
       }
+      const credStatus = required.length === 0
+        ? ""
+        : credsReady
+          ? " [credentials set]"
+          : " [missing credentials]";
 
+      console.log(`  ${connector.id}${credStatus}`);
+      console.log(`    ${connector.name} — ${connector.institution.url}`);
+      console.log(`    ${connector.description}`);
+      console.log(
+        `    Actions: ${connector.actions.map((a) => a.name).join(", ")}`
+      );
       console.log();
     }
   } catch (err) {

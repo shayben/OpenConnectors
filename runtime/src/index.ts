@@ -1,13 +1,21 @@
 /**
- * @openconnectors/runtime
+ * @openconnectors/runtime — Public API
  *
- * Public API for programmatic usage of the OpenConnectors runtime.
+ * Exports for programmatic use of the connector loader, credential vault,
+ * and MCP server.
  */
 
-export { CredentialVault } from "./lib/vault.js";
-export { PluginManager } from "./lib/plugin-manager.js";
-export { loadRegistry, type RegistryEntry } from "./lib/registry.js";
+export { ConnectorLoader, type LoadedConnector } from "./lib/connector-loader.js";
 export {
-  PluginManifestSchema,
-  type PluginManifest,
-} from "./lib/manifest.js";
+  ConnectorSchema,
+  InstitutionSchema,
+  ActionSchema,
+  StepSchema,
+  CredentialSpecSchema,
+  type Connector,
+  type ConnectorAction,
+  type ConnectorCredential,
+  type ConnectorStep,
+} from "./lib/connector-schema.js";
+export { CredentialVault } from "./lib/vault.js";
+export { startMcpServer } from "./lib/mcp-server.js";

@@ -1,0 +1,90 @@
+id: migdal-pension
+name: Migdal Insurance
+description: Extract pension statements and tax documents from Migdal Insurance (מגדל ביטוח)
+version: 0.1.0
+author: OpenConnectors Contributors
+license: MIT
+tags: [pension, israel, insurance]
+
+institution:
+  name: Migdal Insurance
+  name_he: מגדל ביטוח
+  url: https://online.migdal.co.il
+  country: IL
+  locale: he-IL
+  timezone: Asia/Jerusalem
+  requires_israeli_ip: true
+
+credentials:
+  - key: national_id
+    label: "National ID (תעודת זהות)"
+    type: text
+  - key: password
+    label: Portal Password
+    type: password
+
+actions:
+  - name: fetch_pension_statement
+    description: Fetch current pension fund balance, contributions, and returns
+    input_schema:
+      type: object
+      properties:
+        year:
+          type: number
+          description: Year for the pension statement (defaults to current year)
+      required: []
+    output_schema: PensionStatement
+    steps:
+      - phase: login
+        instructions: |
+          1. browser_navigate to https://online.migdal.co.il/login
+          2. browser_snapshot the login form
+          3. Fill the ID field (input[name="teudat-zehut"]) with {{national_id}}
+          4. Fill the password field (input[name="password"]) with {{password}}
+          5. Click the login button (button.login-btn or button[type="submit"])
+          6. Wait for the portfolio overview (.portfolio-overview) to appear
+        otp_handling: |
+          If SMS OTP required: screenshot, ask user for code, fill and submit.
+        timeout_seconds: 120
+
+      - phase: navigate
+        instructions: |
+          1. Click "תיק ביטוח" (insurance portfolio) or "פנסיה וחיסכון" (pension & savings)
+          2. If a year selector is present (select#reportYear), select the requested year
+          3. Wait for product cards (.product-card) to load
+
+      - phase: extract
+        instructions: |
+          1. For each fund, extract name (Hebrew), type (pension/provident/study based on
+             name — "מקפת" / "פנסיה" → pension, "גמל" → provident, "השתלמות" → study),
+             policyNumber, balance, contributions, returns, returnRatePercent,
+             projectedMonthlyPension (if shown)
+          2. Calculate totalBalance = sum of fund balances
+          3. Return PensionStatement { year, asOfDate, institution: "Migdal Insurance",
+             nationalId, funds, totalBalance }
+
+  - name: fetch_tax_documents
+    description: Fetch annual pension statement for a given tax year
+    input_schema:
+      type: object
+      properties:
+        year:
+          type: number
+      required: [year]
+    output_schema: Document
+    steps:
+      - phase: login
+        instructions: (same as fetch_pension_statement)
+
+      - phase: navigate
+        instructions: |
+          Navigate to documents section, select year, download annual statement PDF.
+
+      - phase: extract
+        instructions: |
+          Return Document { type: "investment_statement", mimeType: "application/pdf",
+          taxYear, institution: "Migdal Insurance", content: base64 }
+
+notes: |
+  - Migdal's flagship pension fund is "מגדל מקפת"
+  - Hebrew UI, shared PensionStatement schema

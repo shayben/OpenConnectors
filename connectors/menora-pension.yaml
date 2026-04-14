@@ -1,0 +1,89 @@
+id: menora-pension
+name: Menora Mivtachim
+description: Extract pension statements and tax documents from Menora Mivtachim (מנורה מבטחים)
+version: 0.1.0
+author: OpenConnectors Contributors
+license: MIT
+tags: [pension, israel, insurance]
+
+institution:
+  name: Menora Mivtachim
+  name_he: מנורה מבטחים
+  url: https://pensioni.menora.co.il
+  country: IL
+  locale: he-IL
+  timezone: Asia/Jerusalem
+  requires_israeli_ip: true
+
+credentials:
+  - key: national_id
+    label: "National ID (תעודת זהות)"
+    type: text
+  - key: password
+    label: Portal Password
+    type: password
+
+actions:
+  - name: fetch_pension_statement
+    description: Fetch current pension fund balance, contributions, and returns
+    input_schema:
+      type: object
+      properties:
+        year:
+          type: number
+          description: Year for the pension statement (defaults to current year)
+      required: []
+    output_schema: PensionStatement
+    steps:
+      - phase: login
+        instructions: |
+          1. browser_navigate to https://pensioni.menora.co.il/Login
+          2. browser_snapshot the login form
+          3. Fill the ID field (input#Id) with {{national_id}}
+          4. Fill the password field (input#Password) with {{password}}
+          5. Click the login button (button#loginBtn or button[type="submit"])
+          6. Wait for the pension dashboard (.pension-dashboard or similar)
+        otp_handling: |
+          If SMS OTP required: screenshot, ask user for code, fill and submit.
+        timeout_seconds: 120
+
+      - phase: navigate
+        instructions: |
+          1. Click "קרנות פנסיה" (pension funds) or "סיכום חשבון" (account summary)
+          2. If a year filter is present (select#yearFilter), select the requested year
+          3. Wait for fund cards (.fund-card) to load
+
+      - phase: extract
+        instructions: |
+          1. For each fund, extract name (Hebrew), type (pension/provident/study based on
+             name), policyNumber, balance, employeeContributions, employerContributions,
+             investmentReturns, returnRatePercent, and projectedMonthlyPension (if shown)
+          2. Calculate totalBalance = sum of fund balances
+          3. Return PensionStatement { year, asOfDate, institution: "Menora Mivtachim",
+             nationalId, funds, totalBalance }
+
+  - name: fetch_tax_documents
+    description: Fetch annual pension statement (דוח שנתי) for a given tax year
+    input_schema:
+      type: object
+      properties:
+        year:
+          type: number
+      required: [year]
+    output_schema: Document
+    steps:
+      - phase: login
+        instructions: (same as fetch_pension_statement)
+
+      - phase: navigate
+        instructions: |
+          Navigate to documents section, select the requested year, download
+          the annual statement PDF.
+
+      - phase: extract
+        instructions: |
+          Return Document { type: "investment_statement", mimeType: "application/pdf",
+          taxYear, institution: "Menora Mivtachim", content: base64 }
+
+notes: |
+  - Hebrew UI, shared PensionStatement schema across Israeli pension connectors

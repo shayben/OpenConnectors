@@ -7,6 +7,7 @@
 
 import { createInterface } from "node:readline";
 import { CredentialVault } from "../lib/vault.js";
+import { PluginManager } from "../lib/plugin-manager.js";
 
 /**
  * Prompt the user for a secret value (hidden input via terminal raw mode).
@@ -112,7 +113,11 @@ export async function vaultClearCommand(
         );
       }
     } else {
-      const count = await vault.clearAll(pluginId);
+      // Load the plugin manifest to discover all credential keys
+      const manager = new PluginManager();
+      const { manifest } = await manager.resolve(pluginId);
+      const keys = manifest.credentials.map((c) => c.key);
+      const count = await vault.clearAll(pluginId, keys);
       console.log(
         `Removed ${count} credential(s) for plugin "${pluginId}".`
       );

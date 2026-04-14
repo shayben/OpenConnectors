@@ -34,3 +34,4 @@ coverage/
 
 # Plugin data (user-generated at runtime)
 data/
+schemas/tsconfig.tsbuildinfo

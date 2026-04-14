@@ -2,13 +2,13 @@
  * Credential Vault
  *
  * Wraps the system keychain (macOS Keychain, Windows Credential Manager,
- * Linux libsecret) via `keytar`. Credentials are stored per-plugin and
- * never leave the local machine.
+ * Linux libsecret) via `@napi-rs/keyring`. Credentials are stored
+ * per-plugin and never leave the local machine.
  *
  * Service name format: "openconnectors/<plugin-id>"
  */
 
-import keytar from "keytar";
+import { Entry } from "@napi-rs/keyring";
 
 const SERVICE_PREFIX = "openconnectors";
 
@@ -26,7 +26,8 @@ export class CredentialVault {
    * @param value    - Secret value — stored encrypted by the OS keychain
    */
   async set(pluginId: string, key: string, value: string): Promise<void> {
-    await keytar.setPassword(serviceName(pluginId), key, value);
+    const entry = new Entry(serviceName(pluginId), key);
+    entry.setPassword(value);
   }
 
   /**
@@ -35,18 +36,12 @@ export class CredentialVault {
    * @returns The secret value, or `null` if not found.
    */
   async get(pluginId: string, key: string): Promise<string | null> {
-    return keytar.getPassword(serviceName(pluginId), key);
-  }
-
-  /**
-   * List all credential keys stored for a plugin.
-   *
-   * @returns Array of `{ account, password }` entries.
-   */
-  async list(
-    pluginId: string
-  ): Promise<Array<{ account: string; password: string }>> {
-    return keytar.findCredentials(serviceName(pluginId));
+    try {
+      const entry = new Entry(serviceName(pluginId), key);
+      return entry.getPassword();
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -55,19 +50,27 @@ export class CredentialVault {
    * @returns `true` if the credential existed and was deleted.
    */
   async delete(pluginId: string, key: string): Promise<boolean> {
-    return keytar.deletePassword(serviceName(pluginId), key);
+    try {
+      const entry = new Entry(serviceName(pluginId), key);
+      entry.deletePassword();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
    * Remove all credentials stored for a plugin.
+   * Requires knowing the credential keys from the manifest.
    *
+   * @param keys - Credential keys to clear (from manifest.credentials[].key)
    * @returns The number of credentials deleted.
    */
-  async clearAll(pluginId: string): Promise<number> {
-    const credentials = await this.list(pluginId);
+  async clearAll(pluginId: string, keys?: string[]): Promise<number> {
+    if (!keys || keys.length === 0) return 0;
     let deleted = 0;
-    for (const cred of credentials) {
-      if (await this.delete(pluginId, cred.account)) {
+    for (const key of keys) {
+      if (await this.delete(pluginId, key)) {
         deleted++;
       }
     }

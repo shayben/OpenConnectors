@@ -15,8 +15,8 @@ Claude
   ├── @playwright/mcp         → browser tools (browser_navigate, browser_click,
   │                             browser_fill_form, browser_snapshot, browser_evaluate,
   │                             browser_take_screenshot, browser_wait_for, ...)
-  └── @openconnectors/runtime → connector tools (list_connectors, get_connector,
-                                get_credentials, vault_status)
+  └── @openconnectors/runtime → list_connectors, get_connector, vault_status,
+                                request_credentials, get_credentials
 ```
 
 **Execution flow when Claude is asked to fetch data from an institution:**
@@ -24,9 +24,22 @@ Claude
 1. `list_connectors` — find the right connector
 2. `get_connector(id)` — load the full YAML definition
 3. `vault_status(connector_id)` — confirm required credentials are set
-4. `get_credentials(connector_id)` — retrieve decrypted secrets from OS keychain
-5. Follow the `steps` in the YAML using Playwright MCP tools, substituting `{{credential_key}}` placeholders
-6. Validate extracted data against the declared `output_schema`
+4. If any are missing: `request_credentials(connector_id)` — opens a local browser
+   form at 127.0.0.1, user fills and submits, values go straight to OS keychain.
+   **Never ask the user for credentials in chat** — the chat transcript is not
+   a secure channel.
+5. `get_credentials(connector_id)` — retrieve decrypted secrets from OS keychain
+6. Follow the `steps` in the YAML using Playwright MCP tools, substituting `{{credential_key}}` placeholders
+7. Validate extracted data against the declared `output_schema`
+
+**Security rules for credential handling (strict):**
+
+- Never type credentials into chat. Never ask the user to paste them into chat.
+- Never include credential values in your own messages, even in "I'll use password=XYZ" form.
+- Call `request_credentials` for the JIT flow whenever creds are missing. It returns
+  only status + key names — the values stay in the keychain.
+- `get_credentials` returns values over MCP; immediately pass them to Playwright MCP
+  `browser_fill_form` calls. Do not echo them back or store them.
 
 ## Build & Development Commands
 

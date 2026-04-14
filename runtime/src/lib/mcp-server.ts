@@ -18,6 +18,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { ConnectorLoader } from "./connector-loader.js";
 import { CredentialVault } from "./vault.js";
+import { promptForCredentials } from "./credential-prompt.js";
 
 export interface McpServerOptions {
   connectorsDir?: string;
@@ -170,6 +171,62 @@ export async function startMcpServer(options?: McpServerOptions): Promise<void> 
           content: [
             { type: "text" as const, text: JSON.stringify(status, null, 2) },
           ],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // --- request_credentials ---
+  // Opens a local browser-based form for the user to securely enter
+  // credentials. Returns only status + stored key names — never the
+  // credential VALUES, so secrets never flow through the MCP transport.
+  server.tool(
+    "request_credentials",
+    "Securely collect missing credentials for a connector by opening a local browser form on 127.0.0.1. Values are stored directly in the OS keychain and are never returned by this tool — use get_credentials afterward to retrieve them. Use this when vault_status shows missing keys.",
+    {
+      connector_id: z.string().describe("Connector id (e.g. 'pension-more')"),
+      force: z
+        .boolean()
+        .optional()
+        .describe("Re-prompt for credentials that are already stored"),
+      timeout_seconds: z
+        .number()
+        .optional()
+        .describe("Max seconds to wait for the user. Defaults to 300 (5 min)."),
+    },
+    async ({ connector_id, force, timeout_seconds }) => {
+      try {
+        const { connector } = await loader.get(connector_id);
+
+        const result = await promptForCredentials(connector, {
+          force: force ?? false,
+          timeoutMs: timeout_seconds
+            ? timeout_seconds * 1000
+            : undefined,
+        });
+
+        const payload = {
+          status: result.status,
+          connector_id: connector.id,
+          stored_keys: result.storedKeys,
+          ...(result.error ? { error: result.error } : {}),
+        };
+
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(payload, null, 2) },
+          ],
+          isError: result.status !== "completed",
         };
       } catch (err) {
         return {

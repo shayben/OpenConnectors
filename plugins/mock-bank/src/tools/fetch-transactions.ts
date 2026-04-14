@@ -44,12 +44,6 @@ async function loginToBank(
 
   // Mock: navigate to a blank page to prove Playwright works
   await page.goto("about:blank");
-  await page.evaluate(
-    (user) => {
-      document.title = `Mock Bank - ${user}`;
-    },
-    username
-  );
 }
 
 /**

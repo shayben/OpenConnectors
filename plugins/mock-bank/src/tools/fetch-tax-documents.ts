@@ -30,12 +30,6 @@ async function loginToBank(
   _password: string
 ): Promise<void> {
   await page.goto("about:blank");
-  await page.evaluate(
-    (user) => {
-      document.title = `Mock Bank Documents - ${user}`;
-    },
-    username
-  );
 }
 
 /** Generate a realistic mock Form 106 for the given year. */

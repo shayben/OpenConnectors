@@ -10,6 +10,7 @@
 import { Command } from "commander";
 import { listCommand } from "./commands/list.js";
 import { serveCommand } from "./commands/serve.js";
+import { setupCommand } from "./commands/setup.js";
 import { vaultSetCommand, vaultClearCommand } from "./commands/vault.js";
 
 const program = new Command();
@@ -25,6 +26,15 @@ program
   .command("list")
   .description("List all available connectors")
   .action(listCommand);
+
+program
+  .command("setup [connector]")
+  .description(
+    "Interactively configure credentials for one or all connectors"
+  )
+  .option("--all", "Set up every connector with missing credentials")
+  .option("--force", "Overwrite credentials that are already stored")
+  .action(setupCommand);
 
 program
   .command("serve")

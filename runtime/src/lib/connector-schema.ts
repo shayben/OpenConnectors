@@ -13,7 +13,7 @@ export const CredentialSpecSchema = z.object({
     message: "Credential key must be snake_case",
   }),
   label: z.string().min(1),
-  type: z.enum(["text", "password", "totp_secret"]).default("text"),
+  type: z.enum(["text", "password", "totp_secret", "phone", "email", "otp"]).default("text"),
   optional: z.boolean().default(false),
 });
 
@@ -45,6 +45,31 @@ export const InstitutionSchema = z.object({
   requires_israeli_ip: z.boolean().default(false),
 });
 
+export const TopologyNodeSchema: z.ZodType<unknown> = z.lazy(() =>
+  z.object({
+    label: z.string(),
+    url: z.string().optional(),
+    note: z.string().optional(),
+    children: z.array(TopologyNodeSchema).optional(),
+    // Populated by the learning-sidecar merger; hand-authored YAMLs omit these.
+    stale: z.boolean().optional(),
+    last_seen_at: z.string().optional(),
+  })
+);
+
+export const ApiShortcutSchema = z.object({
+  name: z.string(),
+  method: z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"]).default("POST"),
+  path: z.string(),
+  auth: z
+    .enum(["bearer_from_storage", "cookie_session", "none"])
+    .default("bearer_from_storage"),
+  auth_storage_key: z.string().optional(),
+  body: z.string().optional(),
+  returns: z.string().optional(),
+  notes: z.string().optional(),
+});
+
 export const ConnectorSchema = z.object({
   id: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, {
     message: "Connector id must be kebab-case",
@@ -58,6 +83,9 @@ export const ConnectorSchema = z.object({
   institution: InstitutionSchema,
   credentials: z.array(CredentialSpecSchema).default([]),
   actions: z.array(ActionSchema).min(1),
+  topology: z.array(TopologyNodeSchema).optional(),
+  api_shortcuts: z.array(ApiShortcutSchema).optional(),
+  known_quirks: z.array(z.string()).optional(),
   output_types: z.string().optional(),
   notes: z.string().optional(),
 });

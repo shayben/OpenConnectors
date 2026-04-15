@@ -16,7 +16,9 @@ Claude
   │                             browser_fill_form, browser_snapshot, browser_evaluate,
   │                             browser_take_screenshot, browser_wait_for, ...)
   └── @openconnectors/runtime → list_connectors, get_connector, vault_status,
-                                request_credentials, get_credentials
+                                request_credentials, get_credentials,
+                                prompt_runtime_input, configure_il_proxy,
+                                record_navigation, record_learning
 ```
 
 **Execution flow when Claude is asked to fetch data from an institution:**
@@ -30,7 +32,10 @@ Claude
    a secure channel.
 5. `get_credentials(connector_id)` — retrieve decrypted secrets from OS keychain
 6. Follow the `steps` in the YAML using Playwright MCP tools, substituting `{{credential_key}}` placeholders
-7. Validate extracted data against the declared `output_schema`
+7. If the flow hits a per-session challenge (SMS OTP, security question, CAPTCHA answer), call `prompt_runtime_input` with an ad-hoc field spec — the user fills it in the same local 127.0.0.1 form, and the value is returned directly (never vaulted). Never ask for an OTP in chat.
+8. Validate extracted data against the declared `output_schema`
+9. **During navigation, after each successful page transition**, call `record_navigation` with the `label_path` the user would read as a breadcrumb (e.g. `["Dashboard", "Reports", "Detailed Balances"]`) and the `observed_url`. This is a mid-flow firehose — one call per page transition, not batched. The runtime strips query strings / fragments and templates numeric/hex/UUID path segments to `:id` before storage, so per-user data never reaches disk. Repeat calls for the same `label_path` just refresh `last_seen_at`; nodes unseen for 30 days get flagged `stale` but are retained. On the next session `get_connector` surfaces the grown tree via its `merged.topology` field.
+10. At the end of a successful flow, call `record_learning` for non-navigation discoveries: private XHR endpoints that short-circuit the UI (`api_shortcut`), gotchas like stuck loaders / misleading direct URLs / modal dismissals (`quirk`), or curated `topology` entries with hand-crafted notes. Don't replay navigation observations here — `record_navigation` already handled those. The runtime PII-scans every payload and merges into `<connector>.learned.json`. Never include IDs, phones, names, balances, tokens, emails, or UUIDs — the server will reject the whole batch if any entry contains PII-like strings.
 
 **Security rules for credential handling (strict):**
 
@@ -87,21 +92,15 @@ See `runtime/src/lib/connector-schema.ts` for the full Zod validation schema.
 
 ## MCP Client Configuration
 
-Users configure both MCP servers in their Claude client:
+Both MCP servers are declared in the committed `.mcp.json` at the repo root — Claude Code auto-loads it when the workspace is opened. The Playwright MCP is launched via `scripts/launch-playwright-mcp.cjs`, a tiny wrapper that reads the repo-root `.env` into `process.env` before spawning `@playwright/mcp`. This keeps `.env` the single source of truth — you do not need to export anything in your shell profile.
 
-```json
-{
-  "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": ["@playwright/mcp@latest", "--proxy-server", "http://user:pass@proxy:port"]
-    },
-    "openconnectors": {
-      "command": "node",
-      "args": ["<path-to-repo>/runtime/dist/cli.js", "serve"]
-    }
-  }
-}
-```
+To enable proxied browsing:
 
-Proxy configuration (for connectors with `requires_israeli_ip: true`) lives at the Playwright MCP level — not per-connector.
+1. Copy `.env.example` → `.env` and set `IL_PROXY_URL=https://user:pass@host:port` (URL-encode special chars; use `https://` for TLS-wrapped proxies like Azure `cloudapp.azure.com:8443`)
+2. Reload the MCP servers (`/mcp` reconnect)
+
+`.env` is gitignored. Proxy credentials never enter `~/.claude.json`, chat, or commits.
+
+Proxy configuration (for connectors with `requires_israeli_ip: true`) lives at the Playwright MCP level — not per-connector. If `IL_PROXY_URL` is unset, Playwright launches without a proxy and connectors that require an IL IP will be blocked by the institution.
+
+**FRE auto-recovery for geo-blocks:** when a connector page matches a geo-block fingerprint (e.g. "הגישה נחסמה", "access blocked", obvious IP-ban copy) on an institution whose YAML has `requires_israeli_ip: true`, call the `configure_il_proxy` MCP tool. It opens a local form, collects the user's proxy URL, writes it to `.env`, and returns a reload hint. Then tell the user to reload the Playwright MCP and retry. Never ask for the proxy URL in chat.

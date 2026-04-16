@@ -12,6 +12,11 @@ import { listCommand } from "./commands/list.js";
 import { serveCommand } from "./commands/serve.js";
 import { setupCommand } from "./commands/setup.js";
 import { vaultSetCommand, vaultClearCommand } from "./commands/vault.js";
+import {
+  profileStatusCommand,
+  profileListAllowCommand,
+  profileRevokeCommand,
+} from "./commands/profile.js";
 
 const program = new Command();
 
@@ -55,5 +60,26 @@ vault
   .description("Remove credentials for a connector")
   .option("--key <key>", "Remove only a specific key")
   .action(vaultClearCommand);
+
+const profile = program
+  .command("profile")
+  .description("Manage persistent browser profiles used by persistent_profile connectors");
+
+profile
+  .command("status <profile_id>")
+  .description("Show disk state, lock state, and domain allowlist for a profile")
+  .action(profileStatusCommand);
+
+profile
+  .command("list-allow <profile_id>")
+  .description("Print the eTLD+1 allowlist for a profile")
+  .action(profileListAllowCommand);
+
+profile
+  .command("revoke <profile_id> <domain>")
+  .description(
+    "Remove a domain (or URL — reduced to eTLD+1) from the profile's allowlist"
+  )
+  .action(profileRevokeCommand);
 
 program.parse();

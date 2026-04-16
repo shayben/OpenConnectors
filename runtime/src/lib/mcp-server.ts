@@ -22,6 +22,7 @@ import { promptForCredentials, promptForRuntimeInput } from "./credential-prompt
 import type { ConnectorCredential } from "./connector-schema.js";
 import { setEnvVar, defaultEnvPath } from "./env-file.js";
 import { recordLearning, normalizePath, assertNoPii, type NavNodeEntry } from "./learning.js";
+import { ProfileManager } from "./profile-manager.js";
 
 export interface McpServerOptions {
   connectorsDir?: string;
@@ -30,6 +31,7 @@ export interface McpServerOptions {
 export async function startMcpServer(options?: McpServerOptions): Promise<void> {
   const loader = new ConnectorLoader({ dir: options?.connectorsDir });
   const vault = new CredentialVault();
+  const profiles = new ProfileManager();
 
   const server = new McpServer({
     name: "openconnectors",
@@ -200,10 +202,91 @@ export async function startMcpServer(options?: McpServerOptions): Promise<void> 
     }
   );
 
+  // --- auth_status (PR2) ---
+  // Unified auth-readiness probe. Generalizes vault_status to also cover
+  // `auth: persistent_profile` connectors — for those we report the
+  // profile directory, whether it exists on disk, whether another browser
+  // instance has it locked, and a coarse-grained probe_status
+  // (never_run | ok | expired | locked). For credentials-based connectors
+  // the payload mirrors vault_status (one boolean per key) so existing
+  // callers keep working.
+  server.tool(
+    "auth_status",
+    "Report auth readiness for a connector. Works for any auth type (credentials | persistent_profile | any_of) without leaking any secret or cookie value.",
+    {
+      connector_id: z.string().describe("Connector id"),
+    },
+    async ({ connector_id }) => {
+      try {
+        const { connector } = await loader.get(connector_id);
+        const auth = connector.auth;
+
+        const reportCredentials = async (creds: ConnectorCredential[]) => {
+          const status: Record<string, boolean> = {};
+          for (const cred of creds) {
+            const value = await vault.get(connector.id, cred.key);
+            status[cred.key] = Boolean(value);
+          }
+          return status;
+        };
+
+        let payload: Record<string, unknown>;
+        if (auth.type === "credentials") {
+          payload = {
+            connector_id: connector.id,
+            auth_type: "credentials",
+            credentials: await reportCredentials(auth.credentials),
+          };
+        } else if (auth.type === "persistent_profile") {
+          payload = {
+            connector_id: connector.id,
+            auth_type: "persistent_profile",
+            ...profiles.probe(auth.profile_id),
+          };
+        } else {
+          // any_of — surface the status of every option so the agent can
+          // pick the one that's ready.
+          const options = [];
+          for (const opt of auth.options) {
+            if (opt.type === "credentials") {
+              options.push({
+                auth_type: "credentials",
+                credentials: await reportCredentials(opt.credentials),
+              });
+            } else {
+              options.push({
+                auth_type: "persistent_profile",
+                ...profiles.probe(opt.profile_id),
+              });
+            }
+          }
+          payload = {
+            connector_id: connector.id,
+            auth_type: "any_of",
+            options,
+          };
+        }
+
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(payload, null, 2) },
+          ],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // --- request_credentials ---
-  // Opens a local browser-based form for the user to securely enter
-  // credentials. Returns only status + stored key names — never the
-  // credential VALUES, so secrets never flow through the MCP transport.
   server.tool(
     "request_credentials",
     "Securely collect missing credentials for a connector by opening a local browser form on 127.0.0.1. Values are stored directly in the OS keychain and are never returned by this tool — use get_credentials afterward to retrieve them. Use this when vault_status shows missing keys.",

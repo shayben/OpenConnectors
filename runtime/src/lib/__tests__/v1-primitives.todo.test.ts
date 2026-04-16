@@ -16,15 +16,8 @@ import { describe, test } from "vitest";
 
 // PR1 contracts moved to pr1-schema.test.ts as passing tests.
 
-describe("PR2 — persistent_profile auth + profile manager", () => {
-  test.todo("profile_dir resolves per-OS (Windows %LOCALAPPDATA%, macOS, Linux)");
-  test.todo("OPENCONNECTORS_PROFILES_DIR env override takes precedence");
-  test.todo("Chromium SingletonLock presence is detected and surfaced as a clean error");
-  test.todo("eTLD+1 allowlist blocks launch when connector opens a new domain");
-  test.todo("auth_status reports `never_run | ok | expired` for a persistent_profile connector");
-  test.todo("auth_status remains v0.1-shape for a credentials-only connector");
-  test.todo("`openconnectors profile revoke <profile_id> <domain>` removes from allowlist");
-});
+// PR2 contracts moved to pr2-profile-manager.test.ts as passing tests.
+
 
 describe("PR3 — mutation kind + preview + verify", () => {
   test.todo("get_connector surfaces mutation actions with `preview` and `verify` as structured fields");

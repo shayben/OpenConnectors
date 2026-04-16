@@ -1,0 +1,184 @@
+id: azure-devops
+name: Azure DevOps (Work Items)
+description: |
+  List, create, update, and comment on Azure DevOps work items via the Boards UI.
+  Supports AAD SSO (via shared M365 / AAD browser profile) OR a PAT — user chooses at
+  first run.
+version: 1.0.0
+author: OpenConnectors Contributors
+license: MIT
+tags: [azure-devops, ado, microsoft, write, issues]
+
+institution:
+  name: Azure DevOps
+  url: https://dev.azure.com
+  country: US
+  locale: en-US
+  timezone: UTC
+
+auth:
+  type: any_of
+  options:
+    - type: persistent_profile
+      profile_id: aad
+      browser: msedge
+      signed_in_as_hint: "Your AAD work/school account"
+      expiry_probe:
+        redirect_indicates_expiry: [login.microsoftonline.com]
+    - type: credentials
+      credentials:
+        - { key: ado_org,  label: "Azure DevOps Organization (dev.azure.com/<org>)", type: text }
+        - { key: ado_pat,  label: "Personal Access Token",                            type: password }
+
+text_normalizers: [strip_emoji, nfc]
+pii_patterns: [corporate_m365]
+
+known_quirks:
+  - "Area path is case-sensitive when matched via the UI picker."
+  - "Creating a work item from the Boards view requires the correct column lane to be in view."
+
+actions:
+
+  # ── list_work_items ────────────────────────────────────────────────────────
+  - name: list_work_items
+    kind: fetch
+    description: List work items in a given project and iteration/area.
+    input_schema:
+      type: object
+      properties:
+        org:     { type: string, description: "dev.azure.com/<org>" }
+        project: { type: string }
+        area_path: { type: string, description: "e.g. MyProject\\Platform" }
+      required: [org, project]
+    output_schema: IssueDraft[]
+    steps:
+      - phase: navigate
+        instructions: "browser_navigate to https://dev.azure.com/{{input.org}}/{{input.project}}/_workitems"
+      - phase: extract
+        instructions: |
+          Extract each work item row into IssueDraft:
+            id → custom_fields.id, title → title, type → type,
+            area path → area_path, state → custom_fields.state,
+            assignee → assignees[0], tags → labels, priority → priority.
+
+  # ── create_work_item (single) ──────────────────────────────────────────────
+  - name: create_work_item
+    kind: mutation
+    description: Create a single work item.
+    input_schema: IssueDraft
+    idempotency:
+      key:
+        - { from: "input.area_path", normalize: [lower, trim] }
+        - { literal: "/" }
+        - { from: "input.title",     normalize: [lower, trim] }
+      read_via: list_work_items
+      on_conflict: skip
+    preview:
+      mode: describe_only
+      emit:
+        - "Would create {{input.type}} '{{input.title}}' in {{input.area_path}}"
+    steps:
+      - phase: navigate
+        navigate_by_labels:
+          - { label: New Work Item, role: button }
+          - { label: "{{input.type}}" }
+      - phase: mutate
+        instructions: |
+          Fill Title with {{input.title}}.
+          Set Area Path to {{input.area_path}} (if provided).
+          Fill Description with {{input.description}} (if provided).
+          For each label in input.labels, add it as a tag.
+          For each assignee in input.assignees, add to Assigned To.
+          Click Save.
+    verify:
+      - phase: verify
+        navigate_by_labels:
+          - { label: "Work item {{input.title}}" }
+
+  # ── create_work_items_from_batch ───────────────────────────────────────────
+  - name: create_work_items_from_batch
+    kind: mutation
+    description: Bulk-create work items from an IssueDraftBatch.
+    # IssueDraftBatch provides `issues: IssueDraft[]`. ADO needs tenant-context
+    # (org, project) as peer fields on the wrapper; `extends` keeps the registry
+    # shape canonical and adds the two connector-specific fields.
+    input_schema:
+      extends: IssueDraftBatch
+      fields:
+        org:     { type: string, description: "dev.azure.com/<org>" }
+        project: { type: string }
+      supports: [title, description, labels, assignees, priority, area_path, type]
+    for_each: "{{input.issues}}"
+    as: issue
+    failure_mode: continue
+    idempotency:
+      # area_path is optional on IssueDraft; key on the required fields so the
+      # batch doesn't abort when an item omits area_path.
+      key:
+        - { from: "input.project",   normalize: [lower, trim] }
+        - { literal: "/" }
+        - { from: "issue.title",     normalize: [lower, trim] }
+      read_via: list_work_items
+      on_conflict: skip
+    batch:
+      concurrency: 1
+    steps:
+      - phase: navigate
+        navigate_by_labels:
+          - { label: New Work Item, role: button }
+          - { label: "{{issue.type}}" }
+      - phase: mutate
+        instructions: |
+          Fill Title with {{issue.title}}.
+          Set Area Path to {{issue.area_path}} (if provided).
+          Fill Description with {{issue.description}}.
+          Save.
+        capture:
+          as: work_item_id
+          from_aria_label_match: "Work item (\\d+)"
+    verify:
+      - phase: verify
+        navigate_by_labels:
+          - { label: "Work item {{issue.title}}" }
+
+  # ── update_work_item ───────────────────────────────────────────────────────
+  - name: update_work_item
+    kind: mutation
+    description: Update fields on an existing work item identified by its numeric id.
+    input_schema:
+      extends: IssueDraft
+      fields:
+        # `org` is connector-context, not in the shared IssueDraft shape — declare
+        # it explicitly so the {{input.org}} template var resolves.
+        org:   { type: string, description: "dev.azure.com/<org>" }
+        id:    { type: integer, description: "ADO work item id" }
+        state: { type: string,  description: "New workflow state" }
+      supports: [title, description, labels, assignees, priority]
+    # Natural-id idempotency: the target id is the key, so rerun is safe by construction.
+    steps:
+      - phase: navigate
+        instructions: "browser_navigate to https://dev.azure.com/{{input.org}}/_workitems/edit/{{input.id}}"
+      - phase: mutate
+        instructions: |
+          Apply each set field: title, description, labels, assignees, priority, state.
+          Save.
+
+  # ── add_comment ────────────────────────────────────────────────────────────
+  - name: add_comment
+    kind: mutation
+    description: Add a comment to an existing work item. Not idempotent (comments are intentionally duplicable).
+    input_schema:
+      type: object
+      properties:
+        id:   { type: integer }
+        body: { type: string }
+      required: [id, body]
+    steps:
+      - phase: navigate
+        instructions: "browser_navigate to https://dev.azure.com/{{input.org}}/_workitems/edit/{{input.id}}"
+      - phase: mutate
+        navigate_by_labels:
+          - { label: Discussion, next_scope: subtree }
+          - { label: "Add a comment" }
+      - phase: mutate
+        instructions: "Type {{input.body}} into the comment field, then click Save."

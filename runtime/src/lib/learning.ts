@@ -169,8 +169,28 @@ export function loadLearning(connectorId: string): LearnEntry[] {
   const path = sidecarPath(connectorId);
   if (!existsSync(path)) return [];
   try {
-    const parsed: LearningFile = JSON.parse(readFileSync(path, "utf-8"));
-    return Array.isArray(parsed.entries) ? parsed.entries : [];
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as Partial<LearningFile>;
+    const raw = Array.isArray(parsed.entries) ? parsed.entries : [];
+    const valid: LearnEntry[] = [];
+    for (const entry of raw) {
+      const result = LearnEntrySchema.safeParse(entry);
+      if (result.success) {
+        valid.push(result.data);
+      } else {
+        // Forward-compat: a sidecar written by a newer runtime may contain entry
+        // kinds this runtime doesn't know about yet. Warn and drop, never crash
+        // the loader.
+        const kind =
+          (entry && typeof entry === "object" && "kind" in (entry as Record<string, unknown>)
+            ? String((entry as { kind?: unknown }).kind)
+            : "(missing)");
+        const firstIssue = result.error.issues[0]?.message ?? "invalid";
+        console.warn(
+          `Warning: skipped ${connectorId}.learned.json entry (kind=${kind}): ${firstIssue}`
+        );
+      }
+    }
+    return valid;
   } catch {
     return [];
   }

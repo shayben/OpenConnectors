@@ -15,6 +15,7 @@
   "scripts": {
     "build": "turbo run build",
     "lint": "turbo run lint",
+    "test": "turbo run test",
     "clean": "turbo run clean",
     "typecheck": "turbo run typecheck"
   },

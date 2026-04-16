@@ -1,0 +1,199 @@
+id: microsoft-planner
+name: Microsoft Planner (Premium / Project for the Web)
+description: |
+  Read tasks from a Planner Premium plan, create tasks in bulk from a TaskBatch input,
+  and sweep-delete all tasks. UI automation only — date/dependency operations that
+  require the PSS REST API are out of scope for v1.
+version: 1.0.0
+author: OpenConnectors Contributors
+license: MIT
+tags: [planner, m365, microsoft, write, tasks]
+
+institution:
+  name: Microsoft Planner
+  url: https://tasks.office.com
+  country: US
+  locale: en-US
+  timezone: UTC
+
+auth:
+  type: persistent_profile
+  profile_id: m365
+  browser: msedge
+  signed_in_as_hint: "Your M365 work/school account"
+  expiry_probe:
+    redirect_indicates_expiry:
+      - login.microsoftonline.com
+      - login.live.com
+
+# Applied to every templated input string before the runtime dispatches it to Playwright,
+# AND applied first when evaluating idempotency key parts on both existing and incoming
+# rows. See design-v1.md §2.3 for the full normalization pipeline.
+text_normalizers: [strip_emoji, ascii_dashes, ascii_arrows, nfc, collapse_whitespace]
+
+pii_patterns: [corporate_m365]
+
+known_quirks:
+  - "Board view is required for Add task; Grid view is required for bulk read."
+  - "Clicking a task title enters edit mode; click the card body (not the title) to open the detail panel."
+  - "Delete-all must sweep: the grid virtualises rows, one pass misses most tasks."
+  - "Planner garbles em-dash/en-dash and emoji when typed — runtime normalizes on the way in."
+  - "Buckets scroll horizontally on plans with >5 buckets; auto-scroll-into-view is required before Add task."
+  - "Delete confirmation dialog is NOT shown on all tenants — the confirm step is optional with a short timeout."
+  - "Card delete is via hover→ellipsis→Delete, NOT right-click. Right-click opens the browser context menu."
+  - "Checklist idempotency is title+bucket only; v1 will not reconcile checklist deltas on a rerun. For a clean slate, delete then recreate."
+
+actions:
+
+  # ── list_tasks ─────────────────────────────────────────────────────────────
+  - name: list_tasks
+    kind: fetch
+    description: List all tasks currently in the plan (used for idempotency + sweep).
+    input_schema:
+      type: object
+      properties:
+        plan_url: { type: string, description: "Full Planner plan URL" }
+      required: [plan_url]
+    output_schema: TaskDraft[]
+    pre_steps:
+      - dismiss_if_present: { label: "Close welcome banner", timeout_seconds: 2 }
+    steps:
+      - phase: navigate
+        instructions: "browser_navigate to {{input.plan_url}}"
+      - phase: navigate
+        navigate_by_labels:
+          - { label: Grid, role: tab, next_scope: controlled_region }
+      - phase: extract
+        instructions: |
+          Read every row in the grid. For each: map name → TaskDraft.title,
+          bucket column value → TaskDraft.bucket, priority cell → priority,
+          progress cell → progress. Return TaskDraft[].
+
+  # ── create_tasks_from_batch ────────────────────────────────────────────────
+  - name: create_tasks_from_batch
+    kind: mutation
+    description: Create Planner tasks from a TaskBatch input, one per item.
+    input_schema:
+      extends: TaskBatch
+      supports: [title, bucket, priority, progress, notes, checklist]
+      unsupported_fields: warn
+    for_each: "{{input.tasks}}"
+    as: task
+    failure_mode: continue
+    timeout_seconds: 600
+    idempotency:
+      key:
+        - { from: "task.title",  normalize: [lower, trim] }
+        - { literal: "|" }
+        - { from: "task.bucket", normalize: [lower, trim] }
+      read_via: list_tasks
+      on_conflict: skip
+    preview:
+      mode: describe_only
+      emit:
+        - "Would create task '{{task.title}}' in bucket '{{task.bucket}}'"
+        - "  priority={{task.priority}} progress={{task.progress}}"
+        - "  checklist items: {{task.checklist.length}}"
+    batch:
+      concurrency: 1
+    pre_steps:
+      - dismiss_if_present: { label: "Close welcome banner" }
+      - dismiss_if_present: { label: "Not now" }
+    steps:
+      - phase: navigate
+        navigate_by_labels:
+          - { label: Board, role: tab, next_scope: controlled_region }
+      - phase: mutate
+        # Auto-scroll-into-view is implicit on navigate_by_labels (see PR5); this
+        # handles the >5-bucket horizontal-scroll quirk.
+        navigate_by_labels:
+          - { label: "{{task.bucket}}", role: group, next_scope: subtree }
+          - { label: "Add task", role: button }
+        fallback_instructions: |
+          Horizontally scroll the Board view until the {{task.bucket}} column is visible,
+          then click its "Add task" button.
+      - phase: mutate
+        instructions: |
+          Type {{task.title}} into the input with placeholder "Enter a task name",
+          then click the form submit button labeled "Add task".
+        capture:
+          as: task_id
+          # After submit, the newly-created card exposes aria-label like
+          # "Task card: {{task.title}}". The resolver records the matched node's
+          # stable id (Planner puts it in data-tid) into BatchReport.items[].captured.
+          from_aria_label_match: "Task card: (.+)"
+      - phase: mutate
+        # Open the detail panel. Real aria-label is "Task card: {title}" — we click
+        # the card body (NOT the title textbox — that enters title-edit mode).
+        navigate_by_labels:
+          - { label: "Task card: {{task.title}}", click_action: click, next_scope: page }
+        fallback_instructions: |
+          Click the body of the card titled {{task.title}} (NOT the title text — that enters edit mode).
+          The task-detail panel should slide in from the right.
+      - phase: mutate
+        instructions: |
+          In the detail panel, if task.priority is set, click the Priority dropdown and
+          pick the matching label (1=Urgent, 3=Important, 5=Medium, 9=Low).
+          If task.progress is set, click the Progress dropdown and pick
+          0=Not started, 50=In progress, 100=Completed.
+          If task.notes, fill the notes textarea with task.notes.
+          For each item in task.checklist, click "Add an item" and type the item + Enter.
+          Press Escape to close the panel.
+    verify:
+      - phase: verify
+        navigate_by_labels:
+          - { label: Board, role: tab, next_scope: controlled_region }
+          - { label: "{{task.bucket}}", role: group, next_scope: subtree }
+          - { label: "Task card: {{task.title}}" }
+        fallback_instructions: |
+          Confirm a card titled {{task.title}} is visible under the {{task.bucket}} column.
+
+  # ── delete_all_tasks ───────────────────────────────────────────────────────
+  - name: delete_all_tasks
+    kind: mutation
+    destructive: true
+    requires_confirmation: true
+    description: |
+      Delete every task in the plan. Sweeps via Board view using hover→ellipsis→Delete
+      on each card, re-reading the task list between passes because the grid virtualises rows.
+    input_schema:
+      type: object
+      properties: { plan_url: { type: string } }
+      required: [plan_url]
+    sweep:
+      targets_from: list_tasks
+      as: task
+      until_empty: true
+      max_passes: 10
+      refresh_between_passes: true
+    failure_mode: continue
+    preview:
+      mode: describe_only
+      emit:
+        - "Would delete all {{list_tasks.length}} tasks from the plan (DESTRUCTIVE)."
+    pre_steps:
+      - dismiss_if_present: { label: "Close welcome banner" }
+    steps:
+      - phase: navigate
+        navigate_by_labels:
+          - { label: Board, role: tab, next_scope: controlled_region }
+      - phase: mutate
+        # Hover over the card to reveal the overflow/ellipsis menu. Right-click does
+        # NOT work — it opens the browser context menu (see known_quirks).
+        navigate_by_labels:
+          - { label: "Task card: {{task.title}}", click_action: hover, next_scope: page }
+      - phase: mutate
+        navigate_by_labels:
+          - { label: "More options for task {{task.title}}", role: button }
+        fallback_instructions: |
+          Click the "..." / ellipsis button that appeared on hover over the card.
+      - phase: mutate
+        navigate_by_labels:
+          - { label: Delete, role: menuitem }
+      - phase: mutate
+        # Confirmation dialog; absent on some tenants — runtime tolerates missing label.
+        optional: true
+        timeout_seconds: 3
+        navigate_by_labels:
+          - { label: Delete, role: button }
+        fallback_instructions: "If a Delete confirmation dialog is shown, click Delete. Otherwise skip."

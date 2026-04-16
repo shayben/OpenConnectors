@@ -21,31 +21,11 @@ import { describe, test } from "vitest";
 
 // PR3 contracts moved to pr3-preview.test.ts as passing tests.
 
-
-describe("PR4 — for_each + idempotency + BatchReport", () => {
-  // Idempotency key DSL vectors
-  test.todo("key part: { from: 'task.title', normalize: [lower, trim] } evaluates against binding");
-  test.todo("key part: { literal: '|' } concatenates literally");
-  test.todo("key part: trailing whitespace in title normalizes via trim");
-  test.todo("key part: em-dash in title normalizes via nfc + collapse_whitespace");
-  test.todo("key part: `from` path resolving to undefined aborts the batch with a clear error");
-  test.todo("key part: text_normalizers (connector-level) apply BEFORE per-part normalize");
-  test.todo("key part: match between existing and incoming is symmetric (same normalizers applied both sides)");
-  // on_conflict
-  test.todo("idempotency: on_conflict: skip marks item as skipped_idempotent and does not run steps");
-  test.todo("idempotency: v1 rejects on_conflict: update (deferred to v1.1)");
-  test.todo("idempotency: v1 rejects on_conflict: replace (deferred to v1.1)");
-  // Cross-ref
-  test.todo("idempotency: read_via names a non-existent action → ConnectorSchema superRefine error");
-  test.todo("idempotency: read_via names a non-fetch action → ConnectorSchema superRefine error");
-  // BatchReport
-  test.todo("BatchReport includes succeeded, failed, skipped_idempotent, total");
-  test.todo("BatchReport items[].status includes `partial` when mid-item steps fail after create");
-  test.todo("BatchReport items[].captured carries created-id from `capture` step");
-  test.todo("failure_mode: fail_fast stops on first failure; remaining items status=not_run");
-  test.todo("failure_mode: continue processes all items");
-  test.todo("batch.reread_per_item: true re-runs read_via before each create");
-  // Sweep
+// PR4 contracts moved to pr4-batch-runner.test.ts as passing tests.
+// (A handful of sub-cases stay as todos for future PRs: on_conflict: update/replace
+//  are deferred to v1.1; sweep support is tracked under the separate "PR4b — sweep"
+//  group below.)
+describe("PR4b — sweep (deferred follow-up to PR4)", () => {
   test.todo("sweep runs targets_from, iterates, rereads, terminates on empty");
   test.todo("sweep terminates at max_passes even if not empty");
   test.todo("sweep terminates on a zero-delete pass (fixed-point)");

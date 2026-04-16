@@ -24,6 +24,7 @@ import { setEnvVar, defaultEnvPath } from "./env-file.js";
 import { recordLearning, normalizePath, assertNoPii, type NavNodeEntry } from "./learning.js";
 import { ProfileManager } from "./profile-manager.js";
 import { runPreview } from "./preview.js";
+import { BatchRunner, BatchStateError } from "./batch-runner.js";
 
 export interface McpServerOptions {
   connectorsDir?: string;
@@ -33,6 +34,30 @@ export async function startMcpServer(options?: McpServerOptions): Promise<void> 
   const loader = new ConnectorLoader({ dir: options?.connectorsDir });
   const vault = new CredentialVault();
   const profiles = new ProfileManager();
+  const batchRunner = new BatchRunner();
+  // Out-of-band "prior state" snapshots the agent has fed in via
+  // submit_read_snapshot, keyed by `${connector_id}:${action}`. Used by
+  // start_batch to satisfy idempotency.read_via without the runtime
+  // having to drive the fetch itself.
+  const priorStates = new Map<
+    string,
+    { collected_at: number; items: Record<string, unknown>[] }
+  >();
+  const priorStateKey = (c: string, a: string) => `${c}:${a}`;
+
+  const textError = (msg: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${msg}` }],
+    isError: true,
+  });
+  const batchErrorResponse = (err: unknown) => {
+    const msg =
+      err instanceof BatchStateError
+        ? `${err.code}: ${err.message}`
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    return textError(msg);
+  };
 
   const server = new McpServer({
     name: "openconnectors",
@@ -378,31 +403,189 @@ export async function startMcpServer(options?: McpServerOptions): Promise<void> 
     }
   );
 
-  // --- run_mutation (PR3 stub) ---
-  // The PR4 batch-runner will replace this. For PR3, invoking a mutation
-  // deliberately fails with a clear message so early adopters don't
-  // mistake the preview surface for actual execution.
+  // --- submit_read_snapshot (PR4) ---
+  // The agent runs a fetch action out of band (Claude drives the browser
+  // itself) and POSTs the results here. The runtime uses the stored
+  // snapshot to compute idempotency skip-decisions inside start_batch.
+  // We do NOT persist the snapshot to disk — lives in-memory, dropped
+  // on process exit or on explicit drop_read_snapshot.
   server.tool(
-    "run_mutation",
-    "Execute a mutation action. (NOT YET IMPLEMENTED — shipping in PR4. Use run_preview in the meantime.)",
+    "submit_read_snapshot",
+    "Post the output of a fetch action (as array of items) so subsequent start_batch can compute idempotency. Not persisted to disk.",
     {
-      connector_id: z.string().describe("Connector id"),
-      action: z.string().describe("Mutation action name"),
-      input: z.record(z.unknown()).optional(),
+      connector_id: z.string(),
+      action: z.string().describe("The fetch action whose output this is"),
+      items: z
+        .array(z.record(z.unknown()))
+        .describe("The rows/items produced by the fetch action"),
     },
-    async ({ connector_id, action }) => {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text:
-              `Error: run_mutation is not yet implemented (PR4). ` +
-              `You can inspect what '${connector_id}.${action}' would do via run_preview, ` +
-              `but actual mutation execution requires the batch-runner which lands in PR4.`,
-          },
-        ],
-        isError: true,
-      };
+    async ({ connector_id, action, items }) => {
+      try {
+        const { connector } = await loader.get(connector_id);
+        const found = connector.actions.find((a) => a.name === action);
+        if (!found || found.kind !== "fetch") {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Error: '${action}' is not a fetch action on '${connector_id}'.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        priorStates.set(priorStateKey(connector_id, action), {
+          collected_at: Date.now(),
+          items,
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                { stored: true, count: items.length, connector_id, action },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      } catch (err) {
+        return batchErrorResponse(err);
+      }
+    }
+  );
+
+  // --- start_batch (PR4) ---
+  server.tool(
+    "start_batch",
+    "Begin executing a mutation action. Returns a batch_id + summary; the agent then drives the batch via next_step / complete_step / finish_batch.",
+    {
+      connector_id: z.string(),
+      action: z.string(),
+      input: z
+        .record(z.unknown())
+        .default({})
+        .describe("The action input (e.g. { tasks: [...] } for a TaskBatch)"),
+      confirmation_token: z
+        .string()
+        .optional()
+        .describe("Required when the action is destructive + requires_confirmation"),
+    },
+    async ({ connector_id, action, input, confirmation_token }) => {
+      try {
+        const { connector } = await loader.get(connector_id);
+        const found = connector.actions.find((a) => a.name === action);
+        if (!found) {
+          return textError(`action '${action}' not found on '${connector_id}'.`);
+        }
+        if (found.kind !== "mutation") {
+          return textError(
+            `start_batch requires a mutation action; '${action}' is kind='${found.kind}'.`
+          );
+        }
+        let prior_state: Record<string, unknown>[] | undefined;
+        if (found.idempotency) {
+          const key = priorStateKey(connector_id, found.idempotency.read_via);
+          const stored = priorStates.get(key);
+          if (!stored) {
+            return textError(
+              `Action '${action}' declares idempotency.read_via='${found.idempotency.read_via}' ` +
+                `but no snapshot has been submitted. Call submit_read_snapshot first.`
+            );
+          }
+          prior_state = stored.items;
+        }
+        const { summary } = batchRunner.start({
+          connector,
+          action: found,
+          input,
+          prior_state,
+          confirmation_token,
+        });
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(summary, null, 2) },
+          ],
+        };
+      } catch (err) {
+        return batchErrorResponse(err);
+      }
+    }
+  );
+
+  // --- next_step (PR4) ---
+  server.tool(
+    "next_step",
+    "Lease the next mutate/verify step for a batch. Returns {kind: 'step', item_token, rendered_steps} or {kind: 'done', report}.",
+    {
+      batch_id: z.string(),
+    },
+    async ({ batch_id }) => {
+      try {
+        const resp = batchRunner.nextStep(batch_id);
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(resp, null, 2) },
+          ],
+        };
+      } catch (err) {
+        return batchErrorResponse(err);
+      }
+    }
+  );
+
+  // --- complete_step (PR4) ---
+  server.tool(
+    "complete_step",
+    "Report the outcome of a leased step. Replays with the same item_token are idempotent no-ops.",
+    {
+      batch_id: z.string(),
+      item_token: z.string(),
+      status: z.enum(["ok", "failed", "verify_failed"]),
+      error_code: z.string().optional(),
+      error_summary: z
+        .string()
+        .max(500)
+        .optional()
+        .describe("Will be truncated to 240 chars. Do NOT include PII; error summaries appear in batch reports."),
+      captured: z
+        .record(z.unknown())
+        .optional()
+        .describe("Values pulled from capture: slots during the step"),
+    },
+    async ({ batch_id, ...rest }) => {
+      try {
+        const resp = batchRunner.complete(batch_id, rest);
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(resp, null, 2) },
+          ],
+        };
+      } catch (err) {
+        return batchErrorResponse(err);
+      }
+    }
+  );
+
+  // --- finish_batch (PR4) ---
+  server.tool(
+    "finish_batch",
+    "Finalize a batch and return the BatchReport. Drops batch state.",
+    {
+      batch_id: z.string(),
+    },
+    async ({ batch_id }) => {
+      try {
+        const report = batchRunner.finish(batch_id);
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(report, null, 2) },
+          ],
+        };
+      } catch (err) {
+        return batchErrorResponse(err);
+      }
     }
   );
 

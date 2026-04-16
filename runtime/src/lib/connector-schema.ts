@@ -252,6 +252,7 @@ export const IdempotencySpecSchema = z
     on_conflict: z.literal("skip").default("skip"),
   })
   .strict();
+export type IdempotencySpec = z.infer<typeof IdempotencySpecSchema>;
 
 export const SweepSpecSchema = z
   .object({

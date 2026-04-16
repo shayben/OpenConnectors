@@ -106,7 +106,7 @@ export type Auth = z.infer<typeof AuthSchema>;
 
 export const LabelMatchSchema = z
   .object({
-    label: z.string().min(1),
+    label: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
     role: z.string().optional(),
     click_action: z.enum(["click", "right_click", "hover"]).default("click"),
     next_scope: z.enum(["page", "controlled_region", "subtree"]).default("page"),

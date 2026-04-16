@@ -112,10 +112,83 @@ const PII_PATTERNS: Array<{ name: string; re: RegExp }> = [
   { name: "Numeric id in URL path", re: /\/\d{4,}(?:$|[/?#])/ },
 ];
 
-function scan(value: unknown, path: string, hits: string[]): void {
+/**
+ * PR6 — pluggable pattern packs.
+ *
+ * Packs are strictly ADDITIVE: they extend PII_PATTERNS. A string that is
+ * rejected by the baseline is rejected regardless of which packs are
+ * enabled — packs can never relax the default rejections.
+ *
+ * Connectors opt in via top-level `pii_patterns: [corporate_m365]`.
+ */
+export const PII_PATTERN_PACKS: Record<
+  string,
+  Array<{ name: string; re: RegExp }>
+> = {
+  corporate_m365: [
+    {
+      name: "AAD object id (GUID anywhere)",
+      re: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,
+    },
+    {
+      name: "Teams meeting join URL",
+      re: /teams\.microsoft\.com\/l\/meetup-join/i,
+    },
+    {
+      name: "SharePoint personal site path",
+      re: /\/personal\/[A-Za-z0-9._%+-]+(?:_[A-Za-z0-9-]+){2,}\//i,
+    },
+    {
+      // Graph OData / item ids are long, mixed-case, base64-ish strings that
+      // almost always start with 2+ uppercase letters (e.g. AAMkAG…, AQMkAD…).
+      name: "Graph OData / item id",
+      re: /\b[A-Z]{2,}[A-Za-z0-9_-]{30,}=*\b/,
+    },
+  ],
+  corporate_google: [
+    {
+      // Drive file / folder ids: 25+ [A-Za-z0-9_-] with at least one digit AND
+      // one letter, distinguishing them from English words.
+      name: "Drive file / folder id",
+      re: /\b(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{25,}\b/,
+    },
+  ],
+  corporate_atlassian: [
+    {
+      name: "Atlassian cloudId (GUID anywhere)",
+      re: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,
+    },
+    {
+      // Atlassian account ids: 24-char hex, sometimes with a `:` prefix.
+      name: "Atlassian accountId",
+      re: /\b[0-9a-f]{24}\b/,
+    },
+  ],
+};
+
+/** Validated set of pack names — throws on unknown pack. */
+function resolvePacks(
+  packs: string[] | undefined
+): Array<{ name: string; re: RegExp }> {
+  if (!packs || packs.length === 0) return [];
+  const extra: Array<{ name: string; re: RegExp }> = [];
+  for (const p of packs) {
+    const pack = PII_PATTERN_PACKS[p];
+    if (!pack) throw new Error(`Unknown pii_patterns pack: ${p}`);
+    extra.push(...pack);
+  }
+  return extra;
+}
+
+function scan(
+  value: unknown,
+  path: string,
+  hits: string[],
+  patterns: Array<{ name: string; re: RegExp }>
+): void {
   if (value == null) return;
   if (typeof value === "string") {
-    for (const { name, re } of PII_PATTERNS) {
+    for (const { name, re } of patterns) {
       if (re.test(value)) {
         hits.push(`${path}: matches ${name} → ${truncate(value)}`);
       }
@@ -123,12 +196,12 @@ function scan(value: unknown, path: string, hits: string[]): void {
     return;
   }
   if (Array.isArray(value)) {
-    value.forEach((v, i) => scan(v, `${path}[${i}]`, hits));
+    value.forEach((v, i) => scan(v, `${path}[${i}]`, hits, patterns));
     return;
   }
   if (typeof value === "object") {
     for (const [k, v] of Object.entries(value)) {
-      scan(v, path ? `${path}.${k}` : k, hits);
+      scan(v, path ? `${path}.${k}` : k, hits, patterns);
     }
   }
 }
@@ -137,10 +210,20 @@ function truncate(s: string): string {
   return s.length > 80 ? s.slice(0, 77) + "..." : s;
 }
 
-/** Throws if the entry contains anything that looks like personal data. */
-export function assertNoPii(entry: LearnEntry): void {
+/**
+ * Throws if the entry contains anything that looks like personal data.
+ *
+ * @param entry  The learning entry to scan.
+ * @param opts.packs  Optional additive pattern-pack names (e.g.
+ *                    `["corporate_m365"]`). Packs never relax the baseline.
+ */
+export function assertNoPii(
+  entry: LearnEntry,
+  opts?: { packs?: string[] }
+): void {
+  const patterns = [...PII_PATTERNS, ...resolvePacks(opts?.packs)];
   const hits: string[] = [];
-  scan(entry, "", hits);
+  scan(entry, "", hits, patterns);
   if (hits.length > 0) {
     throw new Error(
       `Learning entry rejected: contains PII-like content:\n  ${hits.join("\n  ")}`
@@ -252,11 +335,12 @@ export interface RecordResult {
 
 export function recordLearning(
   connectorId: string,
-  incoming: LearnEntry[]
+  incoming: LearnEntry[],
+  opts?: { packs?: string[] }
 ): RecordResult {
   for (const entry of incoming) {
     LearnEntrySchema.parse(entry);
-    assertNoPii(entry);
+    assertNoPii(entry, opts);
   }
 
   const path = sidecarPath(connectorId);

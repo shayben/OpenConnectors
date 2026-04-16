@@ -17,6 +17,7 @@ import {
   profileListAllowCommand,
   profileRevokeCommand,
 } from "./commands/profile.js";
+import { diagnoseCommand } from "./commands/diagnose.js";
 
 const program = new Command();
 
@@ -81,5 +82,17 @@ profile
     "Remove a domain (or URL — reduced to eTLD+1) from the profile's allowlist"
   )
   .action(profileRevokeCommand);
+
+program
+  .command("diagnose <connector>")
+  .description(
+    "Write a PII-scrubbed diagnostic stub to ~/.openconnectors/diagnostics/"
+  )
+  .option("--scaffold", "Also emit a skeleton v1 YAML the contributor can edit")
+  .action(async (connector: string, opts: { scaffold?: boolean }) => {
+    const result = await diagnoseCommand(connector, { scaffold: opts.scaffold });
+    console.log(`Wrote ${result.diagnose_path}`);
+    if (result.scaffold_path) console.log(`Wrote ${result.scaffold_path}`);
+  });
 
 program.parse();

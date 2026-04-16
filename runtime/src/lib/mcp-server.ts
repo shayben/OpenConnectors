@@ -882,8 +882,10 @@ export async function startMcpServer(options?: McpServerOptions): Promise<void> 
     },
     async ({ connector_id, entries }) => {
       try {
-        await loader.get(connector_id);
-        const result = recordLearning(connector_id, entries as any);
+        const loaded = await loader.get(connector_id);
+        const packs = (loaded.connector as { pii_patterns?: string[] })
+          .pii_patterns ?? [];
+        const result = recordLearning(connector_id, entries as any, { packs });
         return {
           content: [
             {
@@ -943,7 +945,9 @@ export async function startMcpServer(options?: McpServerOptions): Promise<void> 
     },
     async ({ connector_id, label_path, observed_url, note, via }) => {
       try {
-        await loader.get(connector_id);
+        const loaded = await loader.get(connector_id);
+        const packs = (loaded.connector as { pii_patterns?: string[] })
+          .pii_patterns ?? [];
         const path_template = observed_url ? normalizePath(observed_url) : null;
         const entry: NavNodeEntry = {
           kind: "nav_node",
@@ -953,7 +957,7 @@ export async function startMcpServer(options?: McpServerOptions): Promise<void> 
           ...(via ? { via } : {}),
         };
         try {
-          assertNoPii(entry);
+          assertNoPii(entry, { packs });
         } catch (piiErr) {
           return {
             content: [

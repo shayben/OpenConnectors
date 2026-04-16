@@ -1,0 +1,22 @@
+{
+  "entries": [
+    {
+      "kind": "nav_node",
+      "label_path": [
+        "Board view",
+        "Governance",
+        "Add task"
+      ],
+      "path_template": "/tenant/Home/PlanViews/:id",
+      "via": "button",
+      "first_seen_at": "2026-04-16T22:53:10.989Z",
+      "last_seen_at": "2026-04-16T22:53:10.989Z",
+      "stale": false
+    },
+    {
+      "kind": "quirk",
+      "text": "must switch to Board view before clicking Add task; Grid view hides per-bucket Add button"
+    }
+  ],
+  "updated_at": "2026-04-16T22:53:11.040Z"
+}

@@ -227,7 +227,13 @@ function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
 function renderFormPage(
   connector: Connector,
   fields: ConnectorCredential[],
-  token: string
+  token: string,
+  overrides?: {
+    heading?: string;
+    subtitle?: string;
+    submitLabel?: string;
+    securityNote?: string;
+  }
 ): string {
   const isRtl = connector.institution.locale.toLowerCase().startsWith("he");
   const dir = isRtl ? "rtl" : "ltr";
@@ -341,17 +347,21 @@ function renderFormPage(
   </style>
 </head>
 <body>
-  <h1>${escapeHtml(connector.name)}</h1>
-  <p class="subtitle">${escapeHtml(connector.institution.url)}</p>
+  <h1>${escapeHtml(overrides?.heading ?? connector.name)}</h1>
+  <p class="subtitle">${escapeHtml(overrides?.subtitle ?? connector.institution.url)}</p>
   <form method="POST" action="/">
     <input type="hidden" name="token" value="${escapeHtml(token)}" />
     ${fieldHtml}
-    <button type="submit">Save to keychain</button>
+    <button type="submit">${escapeHtml(overrides?.submitLabel ?? "Save to keychain")}</button>
   </form>
   <p class="security-note">
-    Stored in your OS keychain via <code>@napi-rs/keyring</code> —
+    ${
+      overrides?.securityNote
+        ? escapeHtml(overrides.securityNote)
+        : `Stored in your OS keychain via <code>@napi-rs/keyring</code> —
     never sent to Anthropic, never written to disk, never shown in chat.
-    This form is served locally on <code>127.0.0.1</code>.
+    This form is served locally on <code>127.0.0.1</code>.`
+    }
   </p>
 </body>
 </html>`;
@@ -393,6 +403,161 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#x27;");
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// promptForRuntimeInput — ad-hoc, non-vaulted prompt
+// ────────────────────────────────────────────────────────────────────────
+
+/**
+ * Runtime prompt for per-session challenge values (SMS OTPs, security
+ * question answers, one-shot proxy URLs). Unlike promptForCredentials,
+ * values are RETURNED to the caller and NEVER written to the keychain.
+ *
+ * The form UI is identical to the credential form — only the submission
+ * handler differs (collect-and-return instead of vault-and-discard).
+ */
+export interface RuntimePromptOptions {
+  timeoutMs?: number;
+  /** Override the form heading (default: connector.name). */
+  heading?: string;
+  /** Override the form subtitle (default: connector.institution.url). */
+  subtitle?: string;
+}
+
+export interface RuntimePromptResult {
+  status: PromptStatus;
+  values: Record<string, string>;
+  error?: string;
+}
+
+export async function promptForRuntimeInput(
+  connector: Connector,
+  fields: ConnectorCredential[],
+  options: RuntimePromptOptions = {}
+): Promise<RuntimePromptResult> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const token = randomBytes(32).toString("hex");
+
+  if (fields.length === 0) {
+    return { status: "completed", values: {} };
+  }
+
+  return new Promise<RuntimePromptResult>((resolve) => {
+    let resolved = false;
+    let server: Server | undefined;
+    let timer: NodeJS.Timeout | undefined;
+
+    const finish = (result: RuntimePromptResult) => {
+      if (resolved) return;
+      resolved = true;
+      if (timer) clearTimeout(timer);
+      server?.close();
+      resolve(result);
+    };
+
+    timer = setTimeout(
+      () => finish({ status: "timeout", values: {} }),
+      timeoutMs
+    );
+
+    server = createServer(async (req, res) => {
+      try {
+        const url = new URL(
+          req.url ?? "/",
+          `http://${req.headers.host ?? "127.0.0.1"}`
+        );
+        const clientIp = req.socket.remoteAddress;
+        if (
+          clientIp !== "127.0.0.1" &&
+          clientIp !== "::ffff:127.0.0.1" &&
+          clientIp !== "::1"
+        ) {
+          res.writeHead(403, { "Content-Type": "text/plain" });
+          res.end("Forbidden");
+          return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/") {
+          if (url.searchParams.get("token") !== token) {
+            res.writeHead(403, { "Content-Type": "text/plain" });
+            res.end("Invalid or missing token");
+            return;
+          }
+          const html = renderFormPage(connector, fields, token, {
+            heading: options.heading,
+            subtitle: options.subtitle,
+            submitLabel: "Submit",
+            // No keychain footnote on runtime prompts — the value is in
+            // memory only and returned to the caller.
+            securityNote:
+              "Values are returned to the caller in memory only. They are NOT written to the keychain or to disk. This form is served locally on 127.0.0.1.",
+          });
+          res.writeHead(200, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            "Content-Security-Policy":
+              "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'",
+          });
+          res.end(html);
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/") {
+          const body = await readBody(req, 64 * 1024);
+          const params = new URLSearchParams(body);
+          if (params.get("token") !== token) {
+            res.writeHead(403, { "Content-Type": "text/plain" });
+            res.end("Invalid token");
+            return;
+          }
+          const values: Record<string, string> = {};
+          for (const cred of fields) {
+            const v = params.get(cred.key);
+            if (v != null && v !== "") values[cred.key] = v;
+          }
+          res.writeHead(200, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+          });
+          res.end(renderSuccessPage());
+          finish({ status: "completed", values });
+          return;
+        }
+
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("Not found");
+      } catch (err) {
+        finish({
+          status: "error",
+          values: {},
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+
+    server.on("error", (err) => {
+      finish({ status: "error", values: {}, error: err.message });
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server!.address();
+      if (!addr || typeof addr === "string") {
+        finish({
+          status: "error",
+          values: {},
+          error: "Failed to determine server address",
+        });
+        return;
+      }
+      const formUrl = `http://127.0.0.1:${addr.port}/?token=${token}`;
+      openBrowser(formUrl);
+      console.error(`\nOpenConnectors: awaiting runtime input at ${formUrl}\n`);
+    });
+  });
 }
 
 function openBrowser(url: string): void {

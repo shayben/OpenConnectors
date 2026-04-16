@@ -23,6 +23,7 @@ import type { ConnectorCredential } from "./connector-schema.js";
 import { setEnvVar, defaultEnvPath } from "./env-file.js";
 import { recordLearning, normalizePath, assertNoPii, type NavNodeEntry } from "./learning.js";
 import { ProfileManager } from "./profile-manager.js";
+import { runPreview } from "./preview.js";
 
 export interface McpServerOptions {
   connectorsDir?: string;
@@ -77,6 +78,31 @@ export async function startMcpServer(options?: McpServerOptions): Promise<void> 
         // `connector` already has topology/api_shortcuts/known_quirks folded
         // from the .learned.json sidecar by ConnectorLoader. Surface it so
         // future sessions actually see what prior runs discovered.
+        const actionsSummary = connector.actions.map((a) => {
+          if (a.kind === "mutation") {
+            return {
+              name: a.name,
+              kind: "mutation" as const,
+              description: a.description,
+              destructive: a.destructive,
+              requires_confirmation: a.requires_confirmation,
+              has_preview: Boolean(a.preview),
+              has_verify: Boolean(a.verify && a.verify.length > 0),
+              has_idempotency: Boolean(a.idempotency),
+              iterates: a.for_each ? "for_each" : a.sweep ? "sweep" : null,
+              input_schema: typeof a.input_schema === "string"
+                ? { ref: a.input_schema }
+                : ("extends" in (a.input_schema ?? {})
+                    ? { extends: (a.input_schema as { extends: string }).extends }
+                    : { inline: true }),
+            };
+          }
+          return {
+            name: a.name,
+            kind: "fetch" as const,
+            description: a.description,
+          };
+        });
         return {
           content: [
             {
@@ -85,6 +111,7 @@ export async function startMcpServer(options?: McpServerOptions): Promise<void> 
                 {
                   id: connector.id,
                   yaml: raw,
+                  actions: actionsSummary,
                   merged: {
                     topology: connector.topology ?? [],
                     api_shortcuts: connector.api_shortcuts ?? [],
@@ -283,6 +310,99 @@ export async function startMcpServer(options?: McpServerOptions): Promise<void> 
           isError: true,
         };
       }
+    }
+  );
+
+  // --- run_preview (PR3) ---
+  // Describe-only. Given a mutation action + optional input, return a
+  // structured plan — destructive flag, for_each count estimate,
+  // idempotency summary, preview.emit lines — WITHOUT launching a
+  // browser. Lets the agent (and human) sanity-check a batch before
+  // any real mutation runs.
+  server.tool(
+    "run_preview",
+    "Describe what a mutation action would do, without launching a browser. Returns the same plan shape regardless of input; empty input is valid but yields a less-precise item count estimate.",
+    {
+      connector_id: z.string().describe("Connector id"),
+      action: z.string().describe("Mutation action name"),
+      input: z
+        .record(z.unknown())
+        .optional()
+        .describe("Action inputs (same shape as run_mutation input). Optional for PR3."),
+    },
+    async ({ connector_id, action, input }) => {
+      try {
+        const { connector } = await loader.get(connector_id);
+        const found = connector.actions.find((a) => a.name === action);
+        if (!found) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Error: action '${action}' not found on connector '${connector_id}'.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        if (found.kind !== "mutation") {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text:
+                  `Error: run_preview only applies to mutation actions. ` +
+                  `'${action}' is kind='${found.kind}'.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        const report = runPreview({ action: found, connector, input });
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(report, null, 2) },
+          ],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // --- run_mutation (PR3 stub) ---
+  // The PR4 batch-runner will replace this. For PR3, invoking a mutation
+  // deliberately fails with a clear message so early adopters don't
+  // mistake the preview surface for actual execution.
+  server.tool(
+    "run_mutation",
+    "Execute a mutation action. (NOT YET IMPLEMENTED — shipping in PR4. Use run_preview in the meantime.)",
+    {
+      connector_id: z.string().describe("Connector id"),
+      action: z.string().describe("Mutation action name"),
+      input: z.record(z.unknown()).optional(),
+    },
+    async ({ connector_id, action }) => {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text:
+              `Error: run_mutation is not yet implemented (PR4). ` +
+              `You can inspect what '${connector_id}.${action}' would do via run_preview, ` +
+              `but actual mutation execution requires the batch-runner which lands in PR4.`,
+          },
+        ],
+        isError: true,
+      };
     }
   );
 

@@ -19,13 +19,8 @@ import { describe, test } from "vitest";
 // PR2 contracts moved to pr2-profile-manager.test.ts as passing tests.
 
 
-describe("PR3 — mutation kind + preview + verify", () => {
-  test.todo("get_connector surfaces mutation actions with `preview` and `verify` as structured fields");
-  test.todo("run_preview returns describe_only text without launching a browser");
-  test.todo("`destructive: true` is surfaced prominently in the preview output");
-  test.todo("`requires_confirmation: true` forces a confirm step independent of `destructive`");
-  test.todo("pre-PR4 runtime rejects invoking a `kind: mutation` action with a clear error");
-});
+// PR3 contracts moved to pr3-preview.test.ts as passing tests.
+
 
 describe("PR4 — for_each + idempotency + BatchReport", () => {
   // Idempotency key DSL vectors

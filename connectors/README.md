@@ -71,3 +71,58 @@ notes: |
 3. Write `instructions` in natural language that reference Playwright MCP tools.
 4. Run `openconnectors list` to verify it parses.
 5. Store credentials: `openconnectors vault set <id> <credential-key>`.
+
+## Authoring guidance — gotchas every author hits eventually
+
+These are cross-cutting DOM realities that have bitten the reference connectors.
+They aren't framework bugs; they're patterns worth knowing before you start.
+
+### Hover-conditional render (CDP-trusted hover required)
+
+Many modern web UIs (Microsoft Planner, Outlook, Teams, GitHub, Notion, Linear)
+**conditionally render** row-level controls (ellipsis menus, quick-actions
+toolbars, "More options") into the DOM only after a real hover. The React
+component literally has no children for those buttons until a `pointermove`
+with `isTrusted: true` enters the row. None of the following work:
+
+- `element.dispatchEvent(new MouseEvent('pointerenter' | 'mouseenter' | ...))`
+- `page.mouse.move(x, y)` from inside `playwright-browser_run_code`
+- ElementHandle.evaluate hacks that walk the React fiber
+
+What works: `playwright-browser_hover` (CDP-trusted pointer event). The schema
+contract on `LabelMatch.click_action: hover` requires runtime adapters to honor
+this — see the doc comment on `LabelMatchSchema` in `connector-schema.ts`.
+
+If your `hover` step is followed by a "selector not found" error on a
+hover-revealed affordance, your hover is synthetic. Switch the adapter, don't
+add retries.
+
+### Never select by raw `button[...]` CSS — use `role: button`
+
+Modern apps freely mix `<button>` with `<div role="button">` inside the same
+form. A raw `button[aria-label="..."]` CSS selector silently misses the
+div-button half. Always use Playwright role-based queries (`getByRole('button')`
+or YAML `role: button`) — they resolve both implicit and explicit ARIA roles.
+
+### `[role=listitem]` is shared by row containers AND collection items
+
+In Planner-style boards, bucket headers AND task cards both carry
+`role=listitem`. A bare `[role=listitem]` query collides. Disambiguate by:
+
+- a class anchor on one variant (e.g. `.task-board-card`), OR
+- aria-label prefix (e.g. cards start with the title; buckets start with `Bucket: `), OR
+- case (Planner uses lowercase `More options` for cards, capital-O `More Options` for buckets — keep `match_case: true`).
+
+### Don't submit forms by `Enter` if a click submit exists
+
+Many quick-add inputs double-submit on `Enter` because both the keydown handler
+and the form `submit` handler fire. Always click the explicit submit button.
+
+### Hover→click composite pattern
+
+The common ellipsis-then-menuitem pattern is two steps: a `click_action: hover`
+on the row (with `next_scope: subtree`) followed by a `click` on the
+hover-revealed button. The empirical settle time after a CDP hover is ~250ms
+for Planner; if your adapter doesn't auto-wait for the post-hover query to
+become non-empty, add a brief wait before the next step.
+

@@ -17,12 +17,14 @@
  * are printed on every run and cannot be silently forgotten.
  */
 
-import { describe, test } from "vitest";
+import { describe, it, test } from "vitest";
 
 describe("PR4b — sweep (deferred follow-up to PR4)", () => {
-  test.todo("sweep runs targets_from, iterates, rereads, terminates on empty");
-  test.todo("sweep terminates at max_passes even if not empty");
-  test.todo("sweep terminates on a zero-delete pass (fixed-point)");
+  // Implemented; see pr4-sweep.test.ts for full coverage.
+  // Kept as `it.skip` placeholders so this file's count doesn't drift.
+  it.skip("sweep runs targets_from, iterates, rereads, terminates on empty", () => {});
+  it.skip("sweep terminates at max_passes even if not empty", () => {});
+  it.skip("sweep terminates on a zero-delete pass (fixed-point)", () => {});
 });
 
 describe("PR4c — idempotency on_conflict update/replace (deferred to v1.1)", () => {

@@ -16,7 +16,111 @@
     {
       "kind": "quirk",
       "text": "must switch to Board view before clicking Add task; Grid view hides per-bucket Add button"
+    },
+    {
+      "kind": "nav_node",
+      "label_path": [
+        "Plan",
+        "Grid view"
+      ],
+      "path_template": "/webui/premiumplan/:id/org/:id",
+      "note": "default landing view; welcome banner present and dismissable via 'Close welcome banner' label",
+      "via": "direct",
+      "first_seen_at": "2026-04-17T17:41:05.296Z",
+      "last_seen_at": "2026-04-17T17:41:05.296Z",
+      "stale": false
+    },
+    {
+      "kind": "quirk",
+      "text": "Tab labels are 'View Grid', 'View Board', 'View Timeline', etc — NOT 'Grid'/'Board'. Connector YAML must use the 'View ' prefix in navigate_by_labels."
+    },
+    {
+      "kind": "quirk",
+      "text": "Bucket headers use aria-label format 'Bucket: {name}, N of M. K tasks in this bucket. Press enter to add or view tasks in this column...' — NOT a clean role=group with the bucket name as label. Resolver needs prefix match on 'Bucket: {name}'."
+    },
+    {
+      "kind": "quirk",
+      "text": "Add task affordance is role=button on a DIV with aria-label 'Add task card in {bucket} column' — NOT a button labeled 'Add task'. Cannot be looked up by global 'Add task' label; must include bucket name."
+    },
+    {
+      "kind": "quirk",
+      "text": "Task cards aria-label format: '{title}, Use arrow keys to access important task information, press enter to access all task details. Use Ctrl+up arrow...' — NO 'Task card:' prefix. Connector capture pattern from_aria_label_match: 'Task card: (.+)' would match nothing. Use prefix-of-comma or split on ', Use arrow keys'."
+    },
+    {
+      "kind": "quirk",
+      "text": "Hover-revealed ellipsis is labeled 'More options' (inconsistent casing also seen: 'More Options', 'More actions') with NO task-name in the label. Multiple instances coexist on the page; resolver MUST scope to the hovered card's subtree."
+    },
+    {
+      "kind": "quirk",
+      "text": "Grid view default columns are: Task Name | Quick look | Assigned to | Duration | Labels — NO bucket, priority, or progress columns by default. list_tasks cannot map bucket from Grid view alone; must read from Board view (per-bucket walk) or open each task's detail panel."
+    },
+    {
+      "kind": "topology",
+      "label": "Plan",
+      "children": [
+        {
+          "label": "Grid view (default)"
+        },
+        {
+          "label": "Board view",
+          "note": "buckets accessible here; switch via View Board tab"
+        },
+        {
+          "label": "Timeline view"
+        },
+        {
+          "label": "Reports view"
+        },
+        {
+          "label": "Charts view"
+        },
+        {
+          "label": "People view"
+        },
+        {
+          "label": "Goals view"
+        },
+        {
+          "label": "Assignments view"
+        }
+      ]
+    },
+    {
+      "kind": "quirk",
+      "text": "Card ellipsis menu's delete entry is labelled 'Delete task' (not bare 'Delete'). YAML's `{label: Delete, role: menuitem}` exact-match fails. Use `label: 'Delete task'` or add `match_mode: prefix`."
+    },
+    {
+      "kind": "quirk",
+      "text": "v1.1.0 Phase B2 re-smoke (2026-04-17): all 6 prior DOM mismatches confirmed fixed end-to-end (View Board tab, bucket prefix match, 'Add task card in <bucket> column', `^(.+?), Use arrow keys` capture, subtree-scoped ellipsis, bucket-walk list_tasks). Subtree disambiguation reduced ellipsis matches from 78 (global) to 1 (in-card). Single new minor finding above."
+    },
+    {
+      "kind": "quirk",
+      "text": "Bucket 'Add task card in {bucket} column' affordances are <div role=\"button\">, not <button>. Selectors must use role-aware matching (getByRole('button', {name})) or pure aria-label, NEVER button[aria-label=...] CSS — that fails."
+    },
+    {
+      "kind": "quirk",
+      "text": "The 'Add task' SUBMIT button inside the open inline-create form IS a real <button> with aria-label='Add task' (exact). It coexists in the DOM with the per-bucket div-buttons whose aria-label starts with 'Add task card in'. Use exact aria-label match to disambiguate."
+    },
+    {
+      "kind": "quirk",
+      "text": "Pressing Enter in the 'Enter a task name' input creates DUPLICATE cards — the input's keydown handler AND the form submit handler both fire. Always click the explicit 'Add task' submit button to commit. Verified on Premium Planner Apr 2026."
+    },
+    {
+      "kind": "quirk",
+      "text": "After clicking the 'Add task' submit, the inline-create form stays open with input cleared and re-focused. Enables fast bulk-add: open form once per bucket, loop fill+click submit, Escape when done."
+    },
+    {
+      "kind": "quirk",
+      "text": "The card-level 'More options' menu (lowercase o) is conditionally RENDERED on hover, not just CSS-hidden. Without a real CDP hover the button is absent from the DOM. Synthetic mouseenter/over events do NOT trigger render. Only Playwright locator.hover() (or the playwright-mcp browser_hover tool) works reliably; page.mouse.move at coordinates was unreliable."
+    },
+    {
+      "kind": "quirk",
+      "text": "Card listitems must be selected by [role=listitem].task-board-card — bare [role=listitem] also matches BUCKET HEADER listitems, which contain a 'More Options' (capital O) button that will be found instead of the card's 'More options' (lowercase o)."
+    },
+    {
+      "kind": "quirk",
+      "text": "Bucket-walk extraction must enumerate ALL [role=listitem].task-board-card descendants in DOM order; for buckets with >~10 cards the bottom rows may be virtualized off-screen until scrolled. Verified during a 67-task round-trip; smaller buckets (<=10) had no virtualization."
     }
   ],
-  "updated_at": "2026-04-16T22:53:11.040Z"
+  "updated_at": "2026-04-17T22:39:41.346Z"
 }

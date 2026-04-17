@@ -4,7 +4,7 @@ description: |
   Read tasks from a Planner Premium plan, create tasks in bulk from a TaskBatch input,
   and sweep-delete all tasks. UI automation only — date/dependency operations that
   require the PSS REST API are out of scope for v1.
-version: 1.1.0
+version: 1.1.1
 author: OpenConnectors Contributors
 license: MIT
 tags: [planner, m365, microsoft, write, tasks]
@@ -36,9 +36,13 @@ pii_patterns: [corporate_m365]
 known_quirks:
   - "View tabs are labelled 'View Board' / 'View Grid' (the verb is part of the aria-label)."
   - "Bucket headers carry verbose aria-labels: 'Bucket: <name>, N of M. K tasks in this bucket. ...'. Match by prefix."
-  - "Per-bucket 'Add task' affordance is labelled 'Add task card in <bucket> column' — there is NO globally-labelled 'Add task' button."
+  - "Per-bucket 'Add task' affordance is labelled 'Add task card in <bucket> column' — there is NO globally-labelled 'Add task' button. The element is a <div role=\"button\"> (NOT a real <button>); always resolve by `role: button` (Playwright role-based queries handle both implicit and explicit roles), never by raw `button[...]` CSS."
   - "Task cards have NO 'Task card:' prefix. Real label is '<title>, Use arrow keys to access important task information, ...'. Split on ', Use arrow keys' to recover the title."
-  - "The hover-revealed ellipsis menu is labelled 'More options' (sometimes 'More actions', sometimes 'More Options'); multiple instances coexist on the page so it MUST be resolved inside the hovered card's subtree."
+  - "Bucket headers and task cards BOTH carry role=listitem; disambiguate by the `task-board-card` class on cards (or by aria-label prefix). A bare `[role=listitem]` selector will hit bucket headers."
+  - "Card-level 'More options' is LOWERCASE; bucket-header 'More Options' is CAPITAL O. Keep match_case:true on the card hover-menu step to avoid clicking the bucket's overflow menu by accident."
+  - "The hover-revealed ellipsis menu is conditionally RENDERED in the DOM on hover (not just CSS-hidden). It MUST be triggered via Playwright locator hover (CDP-trusted pointer event); synthetic dispatchEvent / page.mouse.move from page-evaluated JS will NOT fire React's hover state machine."
+  - "Card-delete menu item is labelled 'Delete task' (not bare 'Delete')."
+  - "Pressing Enter in the 'Enter a task name' input creates DUPLICATE cards (both the input's keydown handler AND the form's submit handler fire). ALWAYS click the explicit 'Add task' submit button — never submit by Enter."
   - "Grid view default columns are Task Name | Quick look | Assigned to | Duration | Labels — no bucket / priority / progress. Read tasks from Board view (bucket-walk) instead."
   - "Board view is required for Add task; bucket-walk on Board view is required for bulk read."
   - "Clicking a task title enters edit mode; click the card body (not the title) to open the detail panel."
@@ -143,8 +147,11 @@ actions:
           "Add task card in {{task.bucket}} column" button.
       - phase: mutate
         instructions: |
-          Type {{task.title}} into the input with placeholder "Enter a task name",
-          then click the form submit button labeled "Add task".
+          Type {{task.title}} into the input with placeholder "Enter a task name".
+          DO NOT press Enter — it triggers BOTH the keydown handler and the form
+          submit, creating duplicate cards. Click the explicit "Add task" submit
+          button (role: button) inside the same form instead. After the click the
+          input clears and stays focused, ready for the next title.
         capture:
           as: task_id
           # After submit, the newly-created card exposes aria-label
@@ -215,14 +222,18 @@ actions:
           - { label: "Bucket: {{task.bucket}}", match_mode: prefix, next_scope: subtree }
           - { label: "{{task.title}}, Use arrow keys", match_mode: prefix, click_action: hover, next_scope: subtree }
       - phase: mutate
-        # Hover-revealed ellipsis. The label is inconsistent across tenants
-        # ("More options" / "More Options" / "More actions") and the task name
-        # is NOT in the label, so multiple instances coexist on the page —
-        # this MUST resolve inside the hovered card's subtree (set above).
+        # Hover-revealed ellipsis. The card label is LOWERCASE "More options";
+        # bucket-header overflow is CAPITAL O "More Options". Keep
+        # match_case: true so we never hit the bucket's button by accident
+        # (the previous step's `next_scope: subtree` already restricts us to
+        # the hovered card's a11y subtree, but case-strict matching is the
+        # belt-and-suspenders guard required by issue #4 finding 3).
         navigate_by_labels:
-          - { label: ["More options", "More actions"], match_case: false, role: button }
+          - { label: "More options", match_case: true, role: button }
         fallback_instructions: |
           Click the "..." / ellipsis button that appeared on hover over the card.
+          Match the LOWERCASE "More options" label — uppercase "More Options"
+          is the bucket header's button and would delete the wrong thing.
       - phase: mutate
         # Real menuitem label is "Delete task" — exact "Delete" does not match.
         navigate_by_labels:

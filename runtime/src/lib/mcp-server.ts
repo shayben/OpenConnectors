@@ -496,11 +496,28 @@ export async function startMcpServer(options?: McpServerOptions): Promise<void> 
           }
           prior_state = stored.items;
         }
+        let sweep_targets: Record<string, unknown>[] | undefined;
+        let sweep_targets_collected_at: number | undefined;
+        if (found.sweep) {
+          const key = priorStateKey(connector_id, found.sweep.targets_from);
+          const stored = priorStates.get(key);
+          if (!stored) {
+            return textError(
+              `Action '${action}' is a sweep over '${found.sweep.targets_from}' ` +
+                `but no snapshot has been submitted. Call submit_read_snapshot for ` +
+                `'${found.sweep.targets_from}' before start_batch.`
+            );
+          }
+          sweep_targets = stored.items;
+          sweep_targets_collected_at = stored.collected_at;
+        }
         const { summary } = batchRunner.start({
           connector,
           action: found,
           input,
           prior_state,
+          sweep_targets,
+          sweep_targets_collected_at,
           confirmation_token,
         });
         return {
@@ -517,16 +534,83 @@ export async function startMcpServer(options?: McpServerOptions): Promise<void> 
   // --- next_step (PR4) ---
   server.tool(
     "next_step",
-    "Lease the next mutate/verify step for a batch. Returns {kind: 'step', item_token, rendered_steps} or {kind: 'done', report}.",
+    "Lease the next mutate/verify step for a batch. Returns {kind: 'step', item_token, rendered_steps}, {kind: 'refresh_required'} (sweep only — re-run targets fetch + submit_read_snapshot, then call this again), or {kind: 'done', report}.",
     {
       batch_id: z.string(),
     },
     async ({ batch_id }) => {
       try {
-        const resp = batchRunner.nextStep(batch_id);
+        let resp = batchRunner.nextStep(batch_id);
+        // Sweep auto-advance: if the runtime asks for a refresh and the
+        // agent has already (re-)submitted a fresh snapshot for the
+        // targets fetch, consume it inline so the agent doesn't have to
+        // call advance_sweep_pass explicitly.
+        if (resp.kind === "refresh_required") {
+          const ctx = batchRunner.peek(batch_id);
+          if (ctx?.action.sweep) {
+            const key = priorStateKey(ctx.connector.id, ctx.action.sweep.targets_from);
+            const stored = priorStates.get(key);
+            if (stored && stored.collected_at > (ctx.sweepLastSnapshotAt ?? 0)) {
+              batchRunner.advanceSweepPass(
+                batch_id,
+                stored.items,
+                stored.collected_at
+              );
+              resp = batchRunner.nextStep(batch_id);
+            }
+          }
+        }
         return {
           content: [
             { type: "text" as const, text: JSON.stringify(resp, null, 2) },
+          ],
+        };
+      } catch (err) {
+        return batchErrorResponse(err);
+      }
+    }
+  );
+
+  // --- advance_sweep_pass (PR4 sweep) ---
+  // Explicit hand-off for the sweep pass-end protocol. Most callers do not
+  // need this — the next_step tool auto-advances when a fresh snapshot is
+  // available. Use this only when you want to confirm the runtime saw your
+  // snapshot, or to inspect the {advanced, planned, complete} return shape.
+  server.tool(
+    "advance_sweep_pass",
+    "Sweep batches only. After next_step returns {kind:'refresh_required'}, re-run the sweep.targets_from fetch and submit_read_snapshot, then call this to queue the next pass. Idempotent: stale (older) snapshots return {advanced:false, reason:'snapshot_not_fresh'}.",
+    {
+      batch_id: z.string(),
+    },
+    async ({ batch_id }) => {
+      try {
+        const ctx = batchRunner.peek(batch_id);
+        if (!ctx) {
+          return textError(
+            `batch_id '${batch_id}' not found (expired, finished, or never started).`
+          );
+        }
+        if (!ctx.action.sweep) {
+          return textError(
+            `advance_sweep_pass requires a sweep action; '${ctx.action.name}' is not a sweep.`
+          );
+        }
+        const key = priorStateKey(ctx.connector.id, ctx.action.sweep.targets_from);
+        const stored = priorStates.get(key);
+        if (!stored) {
+          return textError(
+            `No snapshot found for '${ctx.action.sweep.targets_from}'. ` +
+              `Call submit_read_snapshot before advance_sweep_pass.`
+          );
+        }
+        const result = batchRunner.advanceSweepPass(
+          batch_id,
+          stored.items,
+          stored.collected_at
+        );
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
           ],
         };
       } catch (err) {

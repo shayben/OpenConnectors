@@ -108,6 +108,23 @@ export const LabelMatchSchema = z
   .object({
     label: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
     role: z.string().optional(),
+    /**
+     * How to interact with the resolved node. Default `click`.
+     *
+     * NOTE on `hover` (issue #3): many modern web UIs (Planner, Outlook,
+     * Teams, Notion, Linear, GitHub) conditionally RENDER row-level
+     * affordances into the DOM only after a real hover. Synthetic events
+     * (`element.dispatchEvent(new MouseEvent('pointerenter'))`), bare
+     * `page.mouse.move(x, y)` from page-evaluated JS, and React-fiber
+     * pokes do NOT fire React's hover state machine — the gated descendants
+     * remain unrendered and the next step's selector silently fails.
+     *
+     * Runtime adapters MUST honor `click_action: hover` by issuing a
+     * CDP-trusted pointer hover (Playwright's `locator.hover()` / the
+     * `playwright-browser_hover` MCP tool both satisfy this). Adapters
+     * unable to provide trusted-event hover MUST fail loudly rather than
+     * fall back to synthetic events.
+     */
     click_action: z.enum(["click", "right_click", "hover"]).default("click"),
     next_scope: z.enum(["page", "controlled_region", "subtree"]).default("page"),
     /**

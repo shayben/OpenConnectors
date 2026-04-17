@@ -110,6 +110,19 @@ export const LabelMatchSchema = z
     role: z.string().optional(),
     click_action: z.enum(["click", "right_click", "hover"]).default("click"),
     next_scope: z.enum(["page", "controlled_region", "subtree"]).default("page"),
+    /**
+     * Matching mode applied to both the computed accessible name and any
+     * aria-label values. Default `exact` preserves v1.0.0 semantics.
+     *   - `exact`    : full-string equality
+     *   - `prefix`   : node label starts with `label`
+     *   - `suffix`   : node label ends with `label`
+     *   - `contains` : node label contains `label` as a substring
+     * `case_insensitive_contains` (the legacy fallback strategy on `name`)
+     * still runs as a last resort regardless of `match_mode`.
+     */
+    match_mode: z.enum(["exact", "prefix", "suffix", "contains"]).default("exact"),
+    /** When false, all comparisons (name + aria-label) are case-insensitive. */
+    match_case: z.boolean().default(true),
   })
   .strict();
 export type LabelMatch = z.infer<typeof LabelMatchSchema>;
@@ -120,9 +133,38 @@ export const CaptureSchema = z
       .string()
       .min(1)
       .regex(/^[a-z][a-z0-9_]*$/, { message: "capture.as must be snake_case" }),
+    /** Regex applied to the resolved node's aria-label; group 1 is the value. */
     from_aria_label_match: z.string().optional(),
+    /**
+     * Alias of `from_aria_label_match` — extracts the value as the first
+     * capture group of the regex applied to the node's aria-label. Provided so
+     * connector authors can spell their intent ("regex on the aria-label")
+     * without having to remember the v1.0.0 short name.
+     */
+    from_aria_label_regex: z.string().optional(),
+    /**
+     * Splits the resolved node's aria-label on this substring and uses the
+     * prefix as the captured value. Convenient for sites that suffix
+     * accessibility hints to every label (e.g. Planner's
+     * "{title}, Use arrow keys to access...").
+     */
+    from_aria_label_split: z.string().optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (c) => {
+      const sources = [
+        c.from_aria_label_match,
+        c.from_aria_label_regex,
+        c.from_aria_label_split,
+      ].filter((v) => v !== undefined).length;
+      return sources <= 1;
+    },
+    {
+      message:
+        "capture must specify at most one of from_aria_label_match / from_aria_label_regex / from_aria_label_split",
+    }
+  );
 
 /**
  * A phase-scoped step. At least one of `instructions`, `navigate_by_labels`,

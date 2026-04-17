@@ -4,7 +4,7 @@ description: |
   Read tasks from a Planner Premium plan, create tasks in bulk from a TaskBatch input,
   and sweep-delete all tasks. UI automation only — date/dependency operations that
   require the PSS REST API are out of scope for v1.
-version: 1.0.0
+version: 1.1.0
 author: OpenConnectors Contributors
 license: MIT
 tags: [planner, m365, microsoft, write, tasks]
@@ -34,7 +34,13 @@ text_normalizers: [strip_emoji, ascii_dashes, ascii_arrows, nfc, collapse_whites
 pii_patterns: [corporate_m365]
 
 known_quirks:
-  - "Board view is required for Add task; Grid view is required for bulk read."
+  - "View tabs are labelled 'View Board' / 'View Grid' (the verb is part of the aria-label)."
+  - "Bucket headers carry verbose aria-labels: 'Bucket: <name>, N of M. K tasks in this bucket. ...'. Match by prefix."
+  - "Per-bucket 'Add task' affordance is labelled 'Add task card in <bucket> column' — there is NO globally-labelled 'Add task' button."
+  - "Task cards have NO 'Task card:' prefix. Real label is '<title>, Use arrow keys to access important task information, ...'. Split on ', Use arrow keys' to recover the title."
+  - "The hover-revealed ellipsis menu is labelled 'More options' (sometimes 'More actions', sometimes 'More Options'); multiple instances coexist on the page so it MUST be resolved inside the hovered card's subtree."
+  - "Grid view default columns are Task Name | Quick look | Assigned to | Duration | Labels — no bucket / priority / progress. Read tasks from Board view (bucket-walk) instead."
+  - "Board view is required for Add task; bucket-walk on Board view is required for bulk read."
   - "Clicking a task title enters edit mode; click the card body (not the title) to open the detail panel."
   - "Delete-all must sweep: the grid virtualises rows, one pass misses most tasks."
   - "Planner garbles em-dash/en-dash and emoji when typed — runtime normalizes on the way in."
@@ -46,6 +52,10 @@ known_quirks:
 actions:
 
   # ── list_tasks ─────────────────────────────────────────────────────────────
+  # Reads Board view bucket-by-bucket so that every TaskDraft carries its
+  # bucket. This is required for the create_tasks_from_batch idempotency key
+  # (title|bucket): if bucket is undefined for existing rows but populated for
+  # incoming rows, every rerun would create duplicates of every task.
   - name: list_tasks
     kind: fetch
     description: List all tasks currently in the plan (used for idempotency + sweep).
@@ -61,13 +71,28 @@ actions:
       - phase: navigate
         instructions: "browser_navigate to {{input.plan_url}}"
       - phase: navigate
+        # The view tab aria-label is "View Board" — the verb is part of the label.
         navigate_by_labels:
-          - { label: Grid, role: tab, next_scope: controlled_region }
+          - { label: "View Board", role: tab, click_action: click, next_scope: controlled_region }
       - phase: extract
         instructions: |
-          Read every row in the grid. For each: map name → TaskDraft.title,
-          bucket column value → TaskDraft.bucket, priority cell → priority,
-          progress cell → progress. Return TaskDraft[].
+          Walk the Board view bucket-by-bucket. The buckets strip scrolls
+          horizontally on plans with more than ~5 buckets — scroll the strip
+          (NOT the page) to bring each bucket into view in turn.
+
+          For each bucket header (aria-label starts with "Bucket: "):
+            - Extract the bucket name as the substring between "Bucket: " and
+              the first comma (regex: ^Bucket: (.+?),).
+            - Within that bucket's accessibility subtree, enumerate every task
+              card. A card's aria-label has the shape
+              "<title>, Use arrow keys to access important task information, ...".
+              Recover the title by splitting on ", Use arrow keys" and taking
+              the prefix.
+            - Emit { title, bucket } per card. Do NOT attempt to read priority
+              or progress from this view — those live in the per-card detail
+              panel and are not needed for idempotency.
+
+          Return TaskDraft[].
 
   # ── create_tasks_from_batch ────────────────────────────────────────────────
   - name: create_tasks_from_batch
@@ -102,31 +127,37 @@ actions:
     steps:
       - phase: navigate
         navigate_by_labels:
-          - { label: Board, role: tab, next_scope: controlled_region }
+          - { label: "View Board", role: tab, click_action: click, next_scope: controlled_region }
       - phase: mutate
         # Auto-scroll-into-view is implicit on navigate_by_labels (see PR5); this
-        # handles the >5-bucket horizontal-scroll quirk.
+        # handles the >5-bucket horizontal-scroll quirk. Bucket headers carry
+        # verbose labels like "Bucket: Compliance & Reviews, 1 of 9. 9 tasks in
+        # this bucket. ..." — match by prefix and don't constrain role (it is
+        # inconsistent across tenants).
         navigate_by_labels:
-          - { label: "{{task.bucket}}", role: group, next_scope: subtree }
-          - { label: "Add task", role: button }
+          - { label: "Bucket: {{task.bucket}}", match_mode: prefix, next_scope: subtree }
+          - { label: "Add task card in {{task.bucket}} column", role: button, click_action: click }
         fallback_instructions: |
-          Horizontally scroll the Board view until the {{task.bucket}} column is visible,
-          then click its "Add task" button.
+          Horizontally scroll the Board view bucket strip until the
+          "{{task.bucket}}" column is visible, then click the
+          "Add task card in {{task.bucket}} column" button.
       - phase: mutate
         instructions: |
           Type {{task.title}} into the input with placeholder "Enter a task name",
           then click the form submit button labeled "Add task".
         capture:
           as: task_id
-          # After submit, the newly-created card exposes aria-label like
-          # "Task card: {{task.title}}". The resolver records the matched node's
-          # stable id (Planner puts it in data-tid) into BatchReport.items[].captured.
-          from_aria_label_match: "Task card: (.+)"
+          # After submit, the newly-created card exposes aria-label
+          # "<title>, Use arrow keys to access important task information, ...".
+          # Capture the title (everything before ", Use arrow keys") into the
+          # BatchReport.items[].captured map.
+          from_aria_label_regex: "^(.+?), Use arrow keys"
       - phase: mutate
-        # Open the detail panel. Real aria-label is "Task card: {title}" — we click
-        # the card body (NOT the title textbox — that enters title-edit mode).
+        # Open the detail panel. We click the card body — NOT the title text,
+        # which enters title-edit mode (see known_quirks). Match the card by
+        # prefix on the title since the real aria-label is suffixed.
         navigate_by_labels:
-          - { label: "Task card: {{task.title}}", click_action: click, next_scope: page }
+          - { label: "{{task.title}}, Use arrow keys", match_mode: prefix, click_action: click, next_scope: page }
         fallback_instructions: |
           Click the body of the card titled {{task.title}} (NOT the title text — that enters edit mode).
           The task-detail panel should slide in from the right.
@@ -142,11 +173,11 @@ actions:
     verify:
       - phase: verify
         navigate_by_labels:
-          - { label: Board, role: tab, next_scope: controlled_region }
-          - { label: "{{task.bucket}}", role: group, next_scope: subtree }
-          - { label: "Task card: {{task.title}}" }
+          - { label: "View Board", role: tab, click_action: click, next_scope: controlled_region }
+          - { label: "Bucket: {{task.bucket}}", match_mode: prefix, next_scope: subtree }
+          - { label: "{{task.title}}, Use arrow keys", match_mode: prefix }
         fallback_instructions: |
-          Confirm a card titled {{task.title}} is visible under the {{task.bucket}} column.
+          Confirm a card whose title is {{task.title}} is visible under the {{task.bucket}} column.
 
   # ── delete_all_tasks ───────────────────────────────────────────────────────
   - name: delete_all_tasks
@@ -176,20 +207,26 @@ actions:
     steps:
       - phase: navigate
         navigate_by_labels:
-          - { label: Board, role: tab, next_scope: controlled_region }
+          - { label: "View Board", role: tab, click_action: click, next_scope: controlled_region }
       - phase: mutate
-        # Hover over the card to reveal the overflow/ellipsis menu. Right-click does
-        # NOT work — it opens the browser context menu (see known_quirks).
+        # Scope into the task's bucket so the subsequent "More options" lookup
+        # only sees nodes inside the hovered card's subtree.
         navigate_by_labels:
-          - { label: "Task card: {{task.title}}", click_action: hover, next_scope: page }
+          - { label: "Bucket: {{task.bucket}}", match_mode: prefix, next_scope: subtree }
+          - { label: "{{task.title}}, Use arrow keys", match_mode: prefix, click_action: hover, next_scope: subtree }
       - phase: mutate
+        # Hover-revealed ellipsis. The label is inconsistent across tenants
+        # ("More options" / "More Options" / "More actions") and the task name
+        # is NOT in the label, so multiple instances coexist on the page —
+        # this MUST resolve inside the hovered card's subtree (set above).
         navigate_by_labels:
-          - { label: "More options for task {{task.title}}", role: button }
+          - { label: ["More options", "More actions"], match_case: false, role: button }
         fallback_instructions: |
           Click the "..." / ellipsis button that appeared on hover over the card.
       - phase: mutate
+        # Real menuitem label is "Delete task" — exact "Delete" does not match.
         navigate_by_labels:
-          - { label: Delete, role: menuitem }
+          - { label: "Delete task", role: menuitem }
       - phase: mutate
         # Confirmation dialog; absent on some tenants — runtime tolerates missing label.
         optional: true
@@ -197,3 +234,4 @@ actions:
         navigate_by_labels:
           - { label: Delete, role: button }
         fallback_instructions: "If a Delete confirmation dialog is shown, click Delete. Otherwise skip."
+

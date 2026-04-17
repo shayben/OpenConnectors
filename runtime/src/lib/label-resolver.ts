@@ -125,17 +125,38 @@ function collectMatches(
   strategy: ResolveStrategy
 ): Array<{ node: AriaNode; path: number[] }> {
   const needles = labelCandidates(step.label);
+  const mode = step.match_mode ?? "exact";
+  const caseSensitive = step.match_case ?? true;
+  const norm = (s: string) => (caseSensitive ? s : s.toLowerCase());
+  const cmp = (hay: string | undefined, needle: string): boolean => {
+    if (!hay) return false;
+    const h = norm(hay);
+    const n = norm(needle);
+    switch (mode) {
+      case "exact":
+        return h === n;
+      case "prefix":
+        return h.startsWith(n);
+      case "suffix":
+        return h.endsWith(n);
+      case "contains":
+        return h.includes(n);
+      default:
+        return h === n;
+    }
+  };
+
   const hits: Array<{ node: AriaNode; path: number[] }> = [];
   for (const { node, path } of walk(scope)) {
     if (!isVisible(node)) continue;
     let match = false;
     switch (strategy) {
       case "exact_name":
-        if (node.name && needles.some((n) => n === node.name)) match = true;
+        if (needles.some((n) => cmp(node.name, n))) match = true;
         break;
       case "aria_label_any_of": {
         const labels = ariaLabels(node);
-        if (labels.length > 0 && needles.some((n) => labels.includes(n))) {
+        if (labels.length > 0 && needles.some((n) => labels.some((l) => cmp(l, n)))) {
           match = true;
         }
         break;
@@ -144,8 +165,7 @@ function collectMatches(
         if (
           step.role &&
           node.role === step.role &&
-          node.name &&
-          needles.some((n) => n === node.name)
+          needles.some((n) => cmp(node.name, n))
         ) {
           match = true;
         }
